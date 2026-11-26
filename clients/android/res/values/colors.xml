@@ -1,0 +1,5 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <!-- 自适应图标底板色：与图标源（暗夜蓝 #101624，tools/make-icons.py 同一几何口径）一致 -->
+    <color name="ic_launcher_background">#101624</color>
+</resources>

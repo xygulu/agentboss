@@ -1,0 +1,7 @@
+# 生成物（xcodegen / xcodebuild）
+build/
+Codeboss.xcodeproj/
+Codeboss/Info.plist
+*.xcuserstate
+xcuserdata/
+.DS_Store

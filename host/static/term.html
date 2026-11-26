@@ -1,0 +1,668 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1,maximum-scale=1,user-scalable=no,viewport-fit=cover">
+<meta name="apple-mobile-web-app-capable" content="yes">
+<meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
+<meta name="theme-color" content="#0b0e14">
+<title>__TITLE__</title>
+<link rel="stylesheet" href="/static/xterm.css">
+<style>
+:root{color-scheme:dark;--ime:0px}
+*{box-sizing:border-box;-webkit-tap-highlight-color:transparent}
+html,body{margin:0;padding:0;height:100%;overflow:hidden;background:#0b0e14;color:#e6edf3;
+  font-family:-apple-system,BlinkMacSystemFont,"PingFang SC",sans-serif;
+  -webkit-text-size-adjust:100%}
+/* 铺满视口用 top/bottom 而不是 height:--apph：老 WebView 里 visualViewport/100% 可能算出 0，
+   容器 0 高 → FitAddon 拿不到尺寸，终端就停默认 80×24，整屏一片黑（Qin 2 Pro 实测）。
+   bare（嵌在浮层 iframe 里）由父页决定尺寸，直接铺满，键盘位移不用本页管。 */
+#app{position:fixed;left:0;right:0;top:0;bottom:0;display:flex;flex-direction:column;
+  padding-bottom:env(safe-area-inset-bottom)}
+body:not(.bare) #app{bottom:auto;height:var(--apph,100%)}
+
+#head{flex:0 0 auto;display:flex;align-items:center;gap:7px;transform:translateY(var(--ime,0px));
+  height:calc(28px + env(safe-area-inset-top));padding:env(safe-area-inset-top) 10px 0;
+  border-bottom:1px solid #171d26;font-size:11px;color:#6e7681}
+#head .t{flex:1;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;color:#c9d1d9;font-weight:600}
+#head .dot{width:6px;height:6px;border-radius:50%;background:#3fb950;flex:0 0 auto}
+#head .dot.off{background:#f85149}
+#head .dot.wait{background:#d29922}
+
+#term{flex:1 1 auto;min-height:0;overflow:hidden;padding:2px 0 0 3px;background:#0b0e14}
+#term .xterm-viewport{background:#0b0e14!important}
+#term .xterm-viewport::-webkit-scrollbar{width:3px}
+#term .xterm-viewport::-webkit-scrollbar-thumb{background:#30363d;border-radius:2px}
+
+#keys{flex:0 0 auto;display:flex;gap:6px;padding:0 8px 7px;overflow-x:auto;scrollbar-width:none}
+#keys::-webkit-scrollbar{display:none}
+#keys button{flex:0 0 auto;height:36px;min-width:44px;padding:0 12px;background:#1b2230;color:#c9d1d9;
+  border:1px solid #2a3240;border-radius:9px;font-size:14px;font-family:inherit}
+#keys button:active{background:#2d3846}
+</style>
+</head>
+<body>
+<div id="app">
+  <div id="head">
+    <!-- 返回列表：不带 host token（以前是 /?t=__TOK__，经中继打开的页面 URL 里会带出密钥）。
+         经中继时中继会给 tunnel 请求注入 t=；本机/局域网靠同一响应下发的 codeboss_t cookie。 -->
+    <a href="/" onclick="if(history.length>1){history.back();return false}" style="color:#6e7681;text-decoration:none;font-size:15px;padding:0 2px">‹</a>
+    <span class="dot" id="dot"></span>
+    <span class="t">__TITLE__</span>
+    <span id="size"></span>
+  </div>
+  <div id="term"></div>
+  <div id="keys">
+    <button data-k="esc">Esc</button>
+    <button data-k="tab">Tab</button>
+    <button data-k="sp">空格</button>
+    <button data-k="bs">⌫</button>
+    <button data-k="co">Ctrl-O</button>
+    <button data-k="up">↑</button>
+    <button data-k="down">↓</button>
+    <button id="redraw">重绘</button>
+    <button id="fsdown">A-</button>
+    <button id="fsup">A+</button>
+  </div>
+</div>
+<!-- 长按弹出的粘贴菜单（终端里没法用系统长按菜单：xterm 画在 canvas 上，
+     没有可选中的文字；壳里又把长按吞了，防「复制链接」泄露 URL） -->
+<div id="tmenu" style="display:none;position:fixed;z-index:99;background:#171d27;
+  border:1px solid #30363d;border-radius:11px;padding:5px;min-width:132px;
+  box-shadow:0 8px 28px rgba(0,0,0,.55)">
+  <button id="tmPaste" style="display:block;width:100%;height:38px;background:none;border:0;
+    color:#e6edf3;font-size:14px;text-align:left;padding:0 12px;border-radius:8px">粘贴</button>
+  <button id="tmCancel" style="display:block;width:100%;height:34px;background:none;border:0;
+    color:#8b949e;font-size:13px;text-align:left;padding:0 12px;border-radius:8px">取消</button>
+</div>
+<script>
+/* 老 WebView 垫片（必须在 xterm.js 之前）：小米/红米内置的 Chromium 常年不更新，
+   缺 replaceChildren 等新 DOM API，xterm 5 一用就抛异常（FitAddon 报
+   "e.replaceChildren is not a function"），屏幕一片黑。 */
+(function () {
+  function kids(self, nodes) {
+    while (self.firstChild) self.removeChild(self.firstChild);
+    for (var i = 0; i < nodes.length; i++) {
+      var n = nodes[i];
+      self.appendChild((n && n.nodeType) ? n : document.createTextNode(String(n)));
+    }
+  }
+  var EP = Element.prototype, DP = Document.prototype, DF = DocumentFragment.prototype;
+  if (!EP.replaceChildren) {
+    var rc = function () { kids(this, arguments); };
+    EP.replaceChildren = rc; DP.replaceChildren = rc; DF.replaceChildren = rc;
+  }
+  ['append', 'prepend'].forEach(function (name) {
+    if (EP[name]) return;
+    var fn = function () {
+      var list = Array.prototype.slice.call(arguments), ref = null;
+      if (name === 'prepend') ref = this.firstChild;
+      for (var i = 0; i < list.length; i++) {
+        var n = list[i];
+        this.insertBefore((n && n.nodeType) ? n : document.createTextNode(String(n)), ref);
+      }
+    };
+    EP[name] = fn; DP[name] = fn; DF[name] = fn;
+  });
+  function node(n) { return (n && n.nodeType) ? n : document.createTextNode(String(n)); }
+  if (!EP.before) EP.before = function () {
+    var p = this.parentNode; if (!p) return;
+    for (var i = 0; i < arguments.length; i++) p.insertBefore(node(arguments[i]), this);
+  };
+  if (!EP.after) EP.after = function () {
+    var p = this.parentNode; if (!p) return;
+    var ref = this.nextSibling;
+    for (var i = 0; i < arguments.length; i++) p.insertBefore(node(arguments[i]), ref);
+  };
+  if (!EP.replaceWith) EP.replaceWith = function () {
+    var p = this.parentNode; if (!p) return;
+    var ref = this.nextSibling; p.removeChild(this);
+    for (var i = 0; i < arguments.length; i++) p.insertBefore(node(arguments[i]), ref);
+  };
+  if (!EP.remove) EP.remove = function () { if (this.parentNode) this.parentNode.removeChild(this); };
+  if (!EP.toggleAttribute) {
+    EP.toggleAttribute = function (name, force) {
+      var has = this.hasAttribute(name);
+      var on = (force === undefined) ? !has : !!force;
+      if (on) this.setAttribute(name, ''); else this.removeAttribute(name);
+      return on;
+    };
+  }
+  if (!window.queueMicrotask) {
+    window.queueMicrotask = function (fn) { Promise.resolve().then(fn); };
+  }
+  if (!window.globalThis) window.globalThis = window;
+  if (!String.prototype.matchAll) {
+    String.prototype.matchAll = function (re) {
+      var rx = (re.global ? re : new RegExp(re.source, re.flags + 'g')), out = [], m;
+      while ((m = rx.exec(this)) !== null) { out.push(m); if (m[0] === '') rx.lastIndex++; }
+      return out[Symbol.iterator]();
+    };
+  }
+  if (!Promise.prototype['finally']) {
+    Promise.prototype['finally'] = function (fn) {
+      return this.then(function (v) { fn(); return v; }, function (e) { fn(); throw e; });
+    };
+  }
+})();
+</script>
+<script src="/static/xterm.js"></script>
+<script src="/static/xterm-addon-fit.js"></script>
+<script>
+const SID = "__SID__";
+const TOKEN = new URLSearchParams(location.search).get('t') || '';
+const LS_FS = 'codeboss_fs';
+/* bare=1：终端被嵌在手机端的全屏浮层里，外层已有顶栏 → 本页自己的头藏掉。
+   键盘弹起时外壳把整页上推 --ime px：浮层顶栏（外层）自己反向补偿留在屏幕顶，
+   本页内容用 padding-top 让开被推上去的那一段，别把终端头几行切掉。 */
+const BARE = new URLSearchParams(location.search).get('bare') === '1';
+if (BARE) {
+  var hd = document.getElementById('head'); if (hd) hd.style.display = 'none';
+  document.body.className = 'bare';
+}
+/* 外壳键盘上推的位移：独立打开时本页自己按 --ime 补偿；嵌在浮层里（bare）由外层算好尺寸，
+   这里不再动 —— 两次补偿会让终端区被顶掉一半。 */
+window.__imeShift = function (px) {
+  if (BARE) return;
+  try { document.documentElement.style.setProperty('--ime', px + 'px'); } catch (e) { }
+};
+
+/* 经中继进来的页面：中继不透传 WebSocket 升级 → 终端改走 HTTP 拉字节（长轮询）。
+   直连（局域网/本机）仍走 WS，延迟更低。 */
+const POLL = "__POLL__" === "1";
+
+/* ---------- 视口高度（iOS 键盘 / 地址栏） ---------- */
+function setAppH(){
+  const h = (window.visualViewport ? window.visualViewport.height : 0) || window.innerHeight || 0;
+  if (h > 100) document.documentElement.style.setProperty('--apph', h + 'px');   // 荒唐值别写进去
+}
+
+/* ---------- 终端 ---------- */
+const NARROW = (window.innerWidth || 390) < 520;
+let fontsize = parseInt(localStorage.getItem(LS_FS) || (NARROW ? '12' : '14'), 10);
+const term = new Terminal({
+  fontFamily: 'Menlo, "SF Mono", "PingFang SC", monospace',
+  fontSize: fontsize,
+  lineHeight: 1.12,
+  letterSpacing: 0,
+  cursorBlink: true,
+  cursorStyle: 'bar',
+  scrollback: 8000,
+  convertEol: false,
+  allowProposedApi: true,
+  drawBoldTextInBrightColors: false,
+  theme: {
+    background:'#0b0e14', foreground:'#e6edf3', cursor:'#58a6ff',
+    selectionBackground:'#2EA04366',
+    /* 与 ext.html / server.py 的 _CSS16 同一套 16 色：两边同一条输出颜色一致 */
+    ansi:['#6e7681','#f87171','#4ade80','#fbbf24','#60a5fa','#c084fc','#22d3ee','#e6edf3',
+          '#9ca3af','#fca5a5','#86efac','#fde047','#93c5fd','#d8b4fe','#67e8f9','#ffffff']
+  }
+});
+const fit = new FitAddon.FitAddon();
+term.loadAddon(fit);
+term.open(document.getElementById('term'));
+
+/* ---------- 固定深底：改写 TUI 画给「浅色宿主终端」的那几类样式 ----------
+   Codex/Claude 这类 TUI 按宿主终端配色自适应：宿主是浅色主题时给输入框、
+   用户消息画亮底（#f9f9f9）；反显（SGR 7）在深底页面上也会变成一条亮条。
+   页面永远是深底，所以写入前把这些 SGR 改写成深底灰字——和实时/原样两张
+   视图同一套口径（server.py：_TERM_GRAY #8b949e、反显条 #3a4150）。 */
+/*CB_SGR_START*/
+const CB_GRAY = '38;2;139;148;158';
+const CB_PAL16 = ['#6e7681','#f87171','#4ade80','#fbbf24','#60a5fa','#c084fc','#22d3ee','#e6edf3',
+                  '#9ca3af','#fca5a5','#86efac','#fde047','#93c5fd','#d8b4fe','#67e8f9','#ffffff'];
+function cbLum(hex){
+  return (parseInt(hex.slice(1,3),16)*299+parseInt(hex.slice(3,5),16)*587
+         +parseInt(hex.slice(5,7),16)*114)/1000;
+}
+function cbLum256(n){
+  if (n < 16) return cbLum(CB_PAL16[n]);
+  let r, g, b;
+  if (n < 232){ n -= 16; const L=[0,95,135,175,215,255];
+    r=L[Math.floor(n/36)]; g=L[Math.floor(n/6)%6]; b=L[n%6]; }
+  else { r = g = b = 8+(n-232)*10; }
+  return (r*299+g*587+b*114)/1000;
+}
+function cbSgr(all, p){
+  const parts = (p || '0').split(';'), out = [];
+  let i = 0;
+  while (i < parts.length){
+    const v = parts[i];
+    if (v === '38' || v === '48' || v === '58'){
+      const mode = parts[i+1];
+      if (mode === '2' && i+4 < parts.length){
+        const light = v === '48' &&
+          (parts[i+2]*299+parts[i+3]*587+parts[i+4]*114)/1000 > 140;
+        out.push(light ? '49;'+CB_GRAY : parts.slice(i,i+5).join(';'));
+        i += 5;
+      } else if (mode === '5' && i+2 < parts.length){
+        out.push(v === '48' && cbLum256(+parts[i+2]) > 140
+                 ? '49;'+CB_GRAY : parts.slice(i,i+3).join(';'));
+        i += 3;
+      } else { out.push(v); i++; }
+    }
+    else if (v === '2'){ out.push(CB_GRAY); i++; }                       // dim → 灰字
+    else if (v === '22'){ out.push('22;39'); i++; }                      // 取消 dim 时把前景一起复位
+    else if (v === '7'){ out.push('38;2;255;255;255;48;2;58;65;80'); i++; }  // 反显 → 深色高亮条
+    else if (v === '27'){ out.push('27;39;49'); i++; }
+    else if (/^(4[0-7]|10[0-7])$/.test(v)){                              // 亮底 → 拿掉，压成灰字
+      const idx = v.length === 3 ? (+v.slice(2)) + 8 : (+v.slice(1));
+      out.push(cbLum(CB_PAL16[idx]) > 140 ? '49;'+CB_GRAY : v); i++;
+    }
+    else { out.push(v); i++; }
+  }
+  return '\x1b[' + out.join(';') + 'm';
+}
+let cbCarry = '';
+function cbBeautify(u8){
+  let s = '';
+  for (let i = 0; i < u8.length; i += 0x2000)
+    s += String.fromCharCode.apply(null, u8.subarray(i, i + 0x2000));
+  s = cbCarry + s; cbCarry = '';
+  const tail = s.match(/\x1b\[[0-9;]*$/);        // 被切在两块中间的控制序列：留到下一块
+  if (tail){ cbCarry = tail[0]; s = s.slice(0, tail.index); }
+  s = s.replace(/\x1b\[([0-9;]*)m/g, cbSgr);
+  const out = new Uint8Array(s.length);
+  for (let i = 0; i < s.length; i++) out[i] = s.charCodeAt(i) & 0xff;
+  return out;
+}
+/*CB_SGR_END*/
+const cbWrite = term.write.bind(term);
+term.write = function(d){
+  try {
+    cbWrite(d instanceof Uint8Array ? cbBeautify(d)
+          : cbBeautify(new TextEncoder().encode(String(d))));
+  } catch(e){ cbWrite(d); }
+};
+
+const dotEl = document.getElementById('dot');
+const sizeEl = document.getElementById('size');
+let ws = null;
+let wantReset = false;
+let lastSent = {c:-1, r:-1};
+let snapTimer = null;
+
+function markOK(){ dotEl.className = 'dot'; }
+function markOff(){ dotEl.className = 'dot off'; }
+function markWait(){ dotEl.className = 'dot wait'; }
+
+/* ---------- HTTP 通道（中继无 WS 时用） ---------- */
+function b64ToBytes(b64){
+  var bin = atob(b64 || ''), out = new Uint8Array(bin.length);
+  for (var i = 0; i < bin.length; i++) out[i] = bin.charCodeAt(i);
+  return out;
+}
+function utf8b64(str){
+  var u = new TextEncoder().encode(str), s = '';
+  for (var i = 0; i < u.length; i += 0x8000)
+    s += String.fromCharCode.apply(null, u.subarray(i, i + 0x8000));
+  return btoa(s);
+}
+function xreq(method, url, body, cb){
+  var x = new XMLHttpRequest();
+  x.open(method, url, true);
+  x.onload = function(){
+    var d = null; try { d = JSON.parse(x.responseText); } catch(e){}
+    cb(d);
+  };
+  x.onerror = x.ontimeout = x.onabort = function(){ cb(null); };
+  if (body != null) x.setRequestHeader('Content-Type', 'application/json');
+  x.send(body == null ? null : JSON.stringify(body));
+}
+var POLL_OFF = 0, POLL_STOP = false, POLL_GEN = 0;
+window.addEventListener('pagehide', function(){ POLL_STOP = true; POLL_GEN++; });
+/* 息屏/切后台：立刻停掉 HTTP 长轮询。不停的话 WebView 哪怕被系统节流，
+   每分钟仍会打一次 /api/ext_term_out，中继就按分钟一直记使用时长。
+   回前台重取整屏快照（pollSnap 会 term.reset 后重写），补齐后台丢掉的输出。
+   POLL_GEN 是「轮次代数」：停/启时自增，旧一轮的迟到回调看到代数对不上就直接丢弃，
+   避免回来时出现两条并行的长轮询。 */
+function pollPause(){ POLL_STOP = true; POLL_GEN++; }
+function pollResume(){
+  if (document.hidden) return;
+  POLL_STOP = false;
+  if (POLL){ POLL_GEN++; pollSnap(); return; }
+  if (ws){ if (ws.readyState === 1) requestSnap(); return; }   // WS 一直连着：要一份权威整屏
+  connect();
+}
+document.addEventListener('visibilitychange', function(){
+  if (document.hidden) pollPause(); else pollResume();
+});
+window.addEventListener('pageshow', function(e){ if (e.persisted) pollResume(); });
+var INQ = [], INBUSY = false;
+/* 输入一次只发一个请求：隧道里并发请求到达顺序不保证，连发会串行错序。
+   每条带 (pq,q) 序号：网络一抖就重发，服务端按序号去重 —— 既不丢字也不重复。 */
+var PQ = Math.random().toString(36).slice(2, 8), INSEQ = 0;
+function pollIn(body){
+  body.pq = PQ; body.q = ++INSEQ;
+  INQ.push(body);
+  if (!INBUSY) pumpIn();
+}
+function pumpIn(){
+  if (!INQ.length){ INBUSY = false; return; }
+  INBUSY = true;
+  var body = INQ[0];
+  xreq('POST', '/api/ext_term_in/' + SID, body, function(d){
+    if (!d || !d.ok){                 /* 失败：同一条再试两次，成功后必须出队 */
+      body.tries = (body.tries || 0) + 1;
+      if (body.tries < 3){ setTimeout(pumpIn, 220); return; }
+    }
+    INQ.shift();
+    pumpIn();
+  });
+}
+var SNAP_FAIL = 0, SNAP_LEN = -1, LAST_FIT_ERR = '';
+function pollSnap(gen){
+  if (POLL_STOP) return;
+  if (gen === undefined) gen = POLL_GEN;
+  xreq('GET', '/api/ext_term_out/' + SID + '?snap=1', null, function(d){
+    if (POLL_STOP || gen !== POLL_GEN) return;   // 已息屏 / 已重新开轮次：丢弃迟到的旧回调
+    if (!d || !d.ok){
+      SNAP_FAIL++;
+      markWait();
+      /* 连不上不能干等着黑屏：给一行提示，用户知道是网络还是别的问题 */
+      if (SNAP_FAIL === 3) term.write('\r\n\x1b[33m连不上开发机，正在重试… ' +
+        ((d && d.error) || '') + '\x1b[0m\r\n');
+      setTimeout(function(){ pollSnap(gen); }, 1500); return;
+    }
+    SNAP_FAIL = 0;
+    POLL_OFF = d.c || 0;
+    SNAP_LEN = (d.snap || '').length;
+    try { term.reset(); } catch(e){}
+    if (d.snap) term.write(b64ToBytes(d.snap));
+    term.write('\x1b[0m');
+    markOK();
+    pollNext(gen);
+  });
+}
+var NEXT_FAIL = 0;
+function pollNext(gen){
+  if (POLL_STOP) return;
+  if (gen === undefined) gen = POLL_GEN;
+  xreq('GET', '/api/ext_term_out/' + SID + '?c=' + POLL_OFF, null, function(d){
+    if (POLL_STOP || gen !== POLL_GEN) return;
+    if (!d || !d.ok){
+      NEXT_FAIL++;
+      markWait();
+      if (NEXT_FAIL >= 3){ NEXT_FAIL = 0; setTimeout(function(){ pollSnap(gen); }, 800); return; }   // 拉不动 → 重取整屏
+      setTimeout(function(){ pollNext(gen); }, 1200); return;
+    }
+    NEXT_FAIL = 0;
+    if (d.need_snap){ pollSnap(gen); return; }
+    if (d.d) term.write(b64ToBytes(d.d));
+    if (d.c !== undefined) POLL_OFF = d.c;
+    if (d.alive === false) markOff(); else markOK();
+    pollNext(gen);
+  });
+}
+function startPoll(){
+  if (POLL_STOP || ws || document.hidden) return;   // 后台不启动；回前台 visibilitychange 会拉起来
+  try { fit.fit(); } catch(e){}
+  lastSent = {c: term.cols, r: term.rows};
+  // 先把尺寸告诉服务端（服务端按这个尺寸渲染快照），再取整屏
+  xreq('POST', '/api/ext_term_in/' + SID, {resize: [term.cols, term.rows]}, function(){
+    pollSnap();
+  });
+}
+
+function doFit(sendIfChanged){
+  try { fit.fit(); } catch(e){ LAST_FIT_ERR = (e && e.message) || String(e); }
+  sizeEl.textContent = term.cols + '×' + term.rows;
+  if (!sendIfChanged) return;
+  if (term.cols === lastSent.c && term.rows === lastSent.r) return;
+  lastSent = {c: term.cols, r: term.rows};
+  if (POLL){ pollIn({resize: [term.cols, term.rows]}); return; }
+  if (!ws || ws.readyState !== 1) return;
+  ws.send(JSON.stringify({t:'r', c: term.cols, r: term.rows}));
+  // 尺寸变了 → 服务端会重建屏幕，稍后要一份新快照
+  clearTimeout(snapTimer);
+  snapTimer = setTimeout(requestSnap, 420);
+}
+function requestSnap(){
+  if (POLL){ pollSnap(); return; }
+  if (ws && ws.readyState === 1) ws.send(JSON.stringify({t:'q'}));
+  markWait();
+}
+
+function connect(){
+  if (document.hidden) return;   // 后台不重连（否则断网时会每 1.2 秒打一个请求）；回前台再连
+  if (POLL){ startPoll(); return; }
+  const proto = location.protocol === 'https:' ? 'wss' : 'ws';
+  let sock;
+  try {
+    sock = new WebSocket(`${proto}://${location.host}/ws/${SID}?t=${encodeURIComponent(TOKEN)}`);
+  } catch (e) { startPoll(); return; }
+  ws = sock;
+  ws.binaryType = 'arraybuffer';
+  var opened = false;
+  ws.onopen = () => {
+    opened = true;
+    markOK();
+    lastSent = {c:-1, r:-1};
+    setTimeout(() => doFit(true), 80);
+  };
+  ws.onclose = () => {
+    ws = null;
+    if (!opened){ startPoll(); return; }   // WS 根本连不上 → 降级 HTTP
+    markOff();
+    setTimeout(function(){ if (!document.hidden) connect(); }, 1200);   // 后台不重连
+  };
+  ws.onmessage = ev => {
+    if (typeof ev.data === 'string'){
+      let m; try { m = JSON.parse(ev.data); } catch(e){ return; }
+      if (m.t === 'snap'){
+        // 服务端权威整屏：清空本地屏幕再写入，光标状态与服务端对齐
+        try { term.reset(); } catch(e){}
+        term.write(m.d);
+        term.write('\x1b[0m');
+        markOK();
+      }
+      return;
+    }
+    term.write(new Uint8Array(ev.data));
+  };
+  // WS 升级被中间设备挡掉时 2.5 秒还没开 → 走 HTTP
+  setTimeout(() => { if (!opened && ws === sock){ try { sock.close(); } catch(e){} } }, 2500);
+}
+
+function writeTerm(s){
+  if (POLL){ pollIn({d: utf8b64(s)}); return; }
+  if (ws && ws.readyState === 1) ws.send(JSON.stringify({t:'i', d: s}));
+}
+
+
+term.onData(d => writeTerm(d));
+/* 安卓输入法（尤其老 WebView）会把空格等普通字符标成 composed，xterm 的 input 处理会丢掉。
+   只在 xterm 确实会丢的情况下兜底（composed 且本轮 keydown 已发生，且没有 keypress 发送）：
+   否则正常键盘路径照旧交给 xterm，避免重复输入。 */
+/* 中文输入：xterm 自己的 composition 处理在老 WebView 上会丢字/乱序。
+   组词过程不让 xterm 看到，compositionend 时把整段提交文本直接写进终端。 */
+(function(){
+  function ta(el){ return el&&el.classList&&el.classList.contains('xterm-helper-textarea'); }
+  document.addEventListener('compositionstart', function(e){
+    if(ta(e.target)) e.stopImmediatePropagation();
+  }, true);
+  document.addEventListener('compositionupdate', function(e){
+    if(ta(e.target)) e.stopImmediatePropagation();
+  }, true);
+  document.addEventListener('compositionend', function(e){
+    if(!ta(e.target)) return;
+    e.preventDefault(); e.stopImmediatePropagation();
+    if(e.data) writeTerm(e.data);
+    e.target.value='';
+  }, true);
+})();
+var __kdSeen=false,__kpress=false;
+document.addEventListener('keydown',function(){ __kdSeen=true; },true);
+document.addEventListener('keyup',function(){ __kdSeen=false; },true);
+document.addEventListener('keypress',function(){ __kpress=true; setTimeout(function(){ __kpress=false; },0); },true);
+document.addEventListener('input', function(e){
+  var t=e.target;
+  if(!t||!t.classList||!t.classList.contains('xterm-helper-textarea')) return;
+  if(e.inputType!=='insertText'||e.isComposing||!e.data) return;
+  if(!(e.composed&&__kdSeen)||__kpress) return;
+  e.preventDefault(); e.stopImmediatePropagation();
+  writeTerm(e.data);
+  t.value='';
+}, true);
+/* 点终端区域直接输入（软键盘）；浮层里的 ⌨ 按钮也调 cbFocus。
+   按键条点完把焦点还给终端：Tab 补全后可以接着打字，不用再点一次。
+   老设备上 touchstart 里 focus 会被随后的 touchend 顶掉，落点定在 touchend/click。 */
+function termFocus(){
+  /* iframe 里先给 window 焦点，老 WebView 才会把软键盘弹出来 */
+  try{ window.focus(); }catch(e){}
+  try{ term.focus(); }catch(e){ try{ term.textarea.focus(); }catch(_){} }
+}
+window.cbFocus = termFocus;
+(function(){
+  var box=document.getElementById('term');
+  ['touchend','click'].forEach(function(ev){
+    box.addEventListener(ev, function(e){
+      if(e.target.closest && e.target.closest('#keys')) return;
+      termFocus();
+    }, {passive:true});
+  });
+  /* 部分输入法要求焦点元素可编辑且尺寸非零：xterm 的辅助 textarea 默认贴光标，
+     这里补齐移动端输入属性，避免联想/首字母大写干扰命令行 */
+  try{
+    var ta=box.querySelector('.xterm-helper-textarea');
+    if(ta){ ta.setAttribute('autocomplete','off'); ta.setAttribute('autocorrect','off');
+            ta.setAttribute('autocapitalize','off'); ta.setAttribute('spellcheck','false'); }
+  }catch(e){}
+})();
+term.onResize(e => {
+  if (e.cols === lastSent.c && e.rows === lastSent.r) return;
+  lastSent = {c:e.cols, r:e.rows};
+  if (POLL){ pollIn({resize: [e.cols, e.rows]}); return; }
+  if (ws && ws.readyState === 1) ws.send(JSON.stringify({t:'r', c:e.cols, r:e.rows}));
+});
+
+/* ---------- 按键条 ---------- */
+const KEYMAP = { esc:'\u001b', tab:'\t', sp:' ', bs:'\u007f', co:'\u000f', up:'\u001b[A', down:'\u001b[B' };
+document.querySelectorAll('#keys button[data-k]').forEach(b => {
+  b.addEventListener('click', () => { writeTerm(KEYMAP[b.dataset.k] || ''); try{ term.focus(); }catch(e){} });
+});
+document.getElementById('redraw').onclick = requestSnap;
+
+function applyFont(delta){
+  fontsize = Math.max(9, Math.min(22, fontsize + delta));
+  localStorage.setItem(LS_FS, String(fontsize));
+  term.options.fontSize = fontsize;
+  setTimeout(() => doFit(true), 80);
+}
+document.getElementById('fsdown').onclick = () => applyFont(-1);
+document.getElementById('fsup').onclick = () => applyFont(1);
+
+/* ---------- 长按 → 粘贴 ---------- */
+/* 手机上没法往终端里粘贴：xterm 把字画在 canvas 上，没有可选中的文字，
+   系统的长按菜单也就无从弹起（壳里还把长按吞了：防「复制链接」把带 token
+   的 URL 泄出去）。所以长按自己认：按住不动 0.55 秒 → 弹一个小菜单 → 粘贴。
+   剪贴板三条路，依次兜底：
+     1) 壳的桥 CB.clipboard()：原生 ClipboardManager，最稳（不受 http 明文/
+        安全上下文影响，也不用弹授权条）；
+     2) navigator.clipboard.readText()：浏览器里用（Chrome 会弹一次授权）；
+     3) execCommand('paste')：老 WebView 的老办法。 */
+var lpTimer = null, lpXY = null, menuOpen = false;
+function menuShow(x, y) {
+  var m = document.getElementById('tmenu');
+  if (!m) return;
+  m.style.display = 'block';
+  menuOpen = true;
+  var w = m.offsetWidth || 132, h = m.offsetHeight || 80;
+  m.style.left = Math.max(6, Math.min(x - 20, (window.innerWidth || 390) - w - 6)) + 'px';
+  m.style.top = Math.max(6, Math.min(y - 10, (window.innerHeight || 700) - h - 6)) + 'px';
+}
+function menuHide() {
+  var m = document.getElementById('tmenu');
+  if (m) m.style.display = 'none';
+  menuOpen = false;
+}
+async function readClip() {
+  try {
+    var b = window.CB || (window.parent && window.parent.CB);
+    if (b && b.clipboard) { var s = b.clipboard(); if (s) return s; }
+  } catch (e) { }
+  try {
+    if (navigator.clipboard && navigator.clipboard.readText) {
+      var s2 = await navigator.clipboard.readText();
+      if (s2) return s2;
+    }
+  } catch (e) { }
+  try {
+    var ta = document.querySelector('.xterm-helper-textarea');
+    if (ta) {
+      ta.focus();
+      document.execCommand('paste');
+      var v = ta.value || '';
+      ta.value = '';
+      if (v) return v;
+    }
+  } catch (e) { }
+  return '';
+}
+document.getElementById('tmPaste').addEventListener('click', async function () {
+  menuHide();
+  var txt = await readClip();
+  if (!txt) {
+    term.write('\r\n\x1b[33m剪贴板是空的（或系统没让读剪贴板）\x1b[0m\r\n');
+    return;
+  }
+  try { term.paste(txt); } catch (e) { writeTerm(txt); }
+  termFocus();
+});
+document.getElementById('tmCancel').addEventListener('click', menuHide);
+(function () {
+  var box = document.getElementById('term');
+  function stop() { if (lpTimer) { clearTimeout(lpTimer); lpTimer = null; } }
+  box.addEventListener('touchstart', function (e) {
+    if (e.touches.length !== 1) return;
+    if (menuOpen) { menuHide(); return; }
+    lpXY = { x: e.touches[0].clientX, y: e.touches[0].clientY };
+    stop();
+    lpTimer = setTimeout(function () { lpTimer = null; menuShow(lpXY.x, lpXY.y); }, 550);
+  }, { passive: true });
+  box.addEventListener('touchmove', function (e) {
+    if (!lpTimer || !lpXY || !e.touches.length) return;
+    var dx = e.touches[0].clientX - lpXY.x, dy = e.touches[0].clientY - lpXY.y;
+    if (dx * dx + dy * dy > 196) stop();      // 动了 = 滚动/选字，不算长按
+  }, { passive: true });
+  ['touchend', 'touchcancel'].forEach(function (ev) {
+    box.addEventListener(ev, function () { stop(); lpXY = null; }, { passive: true });
+  });
+})();
+
+/* ---------- 启动 / 视口变化 ---------- */
+let vvTimer = null;
+function onViewportChange(){
+  setAppH();
+  clearTimeout(vvTimer);
+  // 键盘弹起、地址栏收起都会改变可视高度 → 必须重算行列，否则新内容画在可视区外
+  vvTimer = setTimeout(() => doFit(true), 160);
+}
+window.addEventListener('resize', onViewportChange);
+window.addEventListener('orientationchange', () => setTimeout(onViewportChange, 320));
+if (window.visualViewport){
+  window.visualViewport.addEventListener('resize', onViewportChange);
+}
+setAppH();
+connect();
+/* 布局要几拍才稳定（iframe、老 WebView 更慢）：多量几次，尺寸变了会同步给服务端 */
+[0, 120, 400, 900, 1800].forEach(ms => setTimeout(() => doFit(true), ms));
+/* 3 秒后把量到的尺寸回报一次：尺寸还是默认 80×24 就说明容器没撑开（手机黑屏的排查依据） */
+setTimeout(function(){
+  var t=document.getElementById('term');
+  var dg=[term.cols, term.rows, t.clientWidth, t.clientHeight, innerWidth, innerHeight,
+          'snap=' + SNAP_LEN, 'fitErr=' + (LAST_FIT_ERR || '-'),
+          'xterm=' + (document.querySelector('#term .xterm') ? 'y' : 'n')];
+  try{
+    var pf=parent.document.getElementById('termFrame'), r=pf.getBoundingClientRect();
+    var cs=parent.getComputedStyle(pf);
+    var ov=parent.document.getElementById('termViewBox').getBoundingClientRect();
+    dg.push('frame=' + (r.height|0) + 'x' + (r.width|0) + ' cssH=' + cs.height + ' pos=' + cs.position);
+    dg.push('overlay=' + (ov.height|0) + ' top=' + (ov.top|0));
+  }catch(e){ dg.push('parentERR=' + ((e && e.message) || e)); }
+  xreq('POST', '/api/ext_term_in/' + SID, {diag: dg.join(' | ')}, function(){});
+}, 3000);
+</script>
+</body>
+</html>

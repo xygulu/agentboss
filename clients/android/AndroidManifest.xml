@@ -1,0 +1,130 @@
+<?xml version="1.0" encoding="utf-8"?>
+<manifest xmlns:android="http://schemas.android.com/apk/res/android"
+    package="com.agentboss.terminal"
+    android:versionCode="2"
+    android:versionName="0.1.0">
+
+    <uses-sdk android:minSdkVersion="24" android:targetSdkVersion="28" />
+
+    <uses-permission android:name="android.permission.INTERNET" />
+    <uses-permission android:name="android.permission.RECORD_AUDIO" />
+    <uses-permission android:name="android.permission.MODIFY_AUDIO_SETTINGS" />
+    <uses-permission android:name="android.permission.SYSTEM_ALERT_WINDOW" />
+    <uses-permission android:name="android.permission.REQUEST_INSTALL_PACKAGES" />
+    <uses-permission android:name="android.permission.ACCESS_NETWORK_STATE" />
+    <uses-permission android:name="android.permission.ACCESS_WIFI_STATE" />
+    <uses-permission android:name="android.permission.CHANGE_WIFI_STATE" />
+    <uses-permission android:name="android.permission.CHANGE_NETWORK_STATE" />
+    <uses-permission android:name="android.permission.ACCESS_FINE_LOCATION" />
+    <uses-permission android:name="android.permission.ACCESS_COARSE_LOCATION" />
+    <uses-permission android:name="android.permission.RECEIVE_BOOT_COMPLETED" />
+    <uses-permission android:name="android.permission.CAMERA" />
+    <uses-permission android:name="android.permission.FOREGROUND_SERVICE" />
+    <!-- 更新装完把屏幕点亮（灭屏时）——普通权限，不弹授权框 -->
+    <uses-permission android:name="android.permission.WAKE_LOCK" />
+    <!-- 「自动」档要让 App 里的设置和系统一致：静默把系统的「自动调节亮度」打开。
+         特殊权限，只在用户先前已授权时才写；没授权也不跳系统页，App 自己读光线传感器
+         （见 MainActivity.setAutoBrightSensor / syncSystemAutoBright） -->
+    <uses-permission android:name="android.permission.WRITE_SETTINGS" />
+
+    <uses-feature android:name="android.hardware.camera" android:required="false" />
+    <uses-feature android:name="android.hardware.camera.autofocus" android:required="false" />
+
+    <application
+        android:label="@string/app_name"
+        android:icon="@mipmap/ic_launcher"
+        android:roundIcon="@mipmap/ic_launcher_round"
+        android:allowBackup="false"
+        android:usesCleartextTraffic="true">
+
+        <!-- 产物用系统应用打开（批次一）：content:// 收口，只读 cache/openwith/，
+             exported=false + 授权式访问（FLAG_GRANT_READ_URI_PERMISSION） -->
+        <provider
+            android:name=".OpenFileProvider"
+            android:authorities="com.agentboss.terminal.openfile"
+            android:exported="false"
+            android:grantUriPermissions="true" />
+
+        <activity
+            android:name=".ScanActivity"
+            android:exported="false"
+            android:excludeFromRecents="true"
+            android:screenOrientation="portrait"
+            android:theme="@android:style/Theme.Black.NoTitleBar.Fullscreen"
+            android:configChanges="orientation|screenSize|keyboardHidden|navigation" />
+
+        <activity
+            android:name=".MainActivity"
+            android:exported="true"
+            android:launchMode="singleInstance"
+            android:windowSoftInputMode="adjustResize"
+            android:excludeFromRecents="true"
+            android:configChanges="orientation|screenSize|keyboardHidden|navigation">
+            <intent-filter>
+                <action android:name="android.intent.action.MAIN" />
+                <category android:name="android.intent.category.DEFAULT" />
+                <category android:name="android.intent.category.LAUNCHER" />
+            </intent-filter>
+        </activity>
+
+        <!-- 后台提醒：黑屏/锁屏时由它维持一条只收提醒的 SSE（中继不计使用时长）。
+             通知栏会常驻一条低优先级「后台提醒运行中」，设置里可一键关掉。 -->
+        <service
+            android:name=".BgService"
+            android:exported="false"
+            android:stopWithTask="false" />
+
+        <!-- HOME 入口做成可动态开关的 alias：桌面接管(kiosk)=开（本 App 竞逐桌面）；
+             切回 App 模式=关——HOME 组件一消失，系统自动清掉指向我们的默认桌面、
+             回落原桌面，用户不用进系统设置里手动改。 -->
+        <activity-alias
+            android:name=".HomeGate"
+            android:targetActivity=".MainActivity"
+            android:enabled="true"
+            android:exported="true">
+            <intent-filter>
+                <action android:name="android.intent.action.MAIN" />
+                <category android:name="android.intent.category.HOME" />
+                <category android:name="android.intent.category.DEFAULT" />
+            </intent-filter>
+        </activity-alias>
+
+        <receiver
+            android:name=".AdminReceiver"
+            android:exported="true"
+            android:permission="android.permission.BIND_DEVICE_ADMIN">
+            <meta-data
+                android:name="android.app.device_admin"
+                android:resource="@xml/device_admin" />
+            <intent-filter>
+                <action android:name="android.app.action.DEVICE_ADMIN_ENABLED" />
+            </intent-filter>
+        </receiver>
+
+        <receiver android:name=".BootReceiver" android:exported="true">
+            <intent-filter>
+                <action android:name="android.intent.action.BOOT_COMPLETED" />
+            </intent-filter>
+        </receiver>
+
+        <!-- 覆盖安装完成后系统发这个广播：顺手把主界面拉起来，更新完不用手动点图标。
+             另一个 action 是装之前用闹钟排的「叫醒」（MIUI/部分 AOSP 会吞掉上面的广播）。 -->
+        <receiver android:name=".ReplacedReceiver" android:exported="true">
+            <intent-filter>
+                <action android:name="android.intent.action.MY_PACKAGE_REPLACED" />
+                <action android:name="com.agentboss.terminal.UPD_WAKE" />
+            </intent-filter>
+        </receiver>
+        <!-- 装之前排的 JobScheduler 任务：系统按时叫醒进程，作为广播之外的第二条路 -->
+        <service
+            android:name=".WakeJob"
+            android:permission="android.permission.BIND_JOB_SERVICE"
+            android:exported="true" />
+        <!-- 安装会话装成功时进程已被杀，动态接收器收不到 → 静态这边收，把 App 拉回前台 -->
+        <receiver android:name=".UpdateStatusReceiver" android:exported="false">
+            <intent-filter>
+                <action android:name="com.agentboss.terminal.INSTALL_STATUS" />
+            </intent-filter>
+        </receiver>
+    </application>
+</manifest>

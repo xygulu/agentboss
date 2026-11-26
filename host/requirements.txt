@@ -1,0 +1,8 @@
+aiohttp>=3.9
+pyte==0.8.2
+qrcode>=7.4
+aiortc>=1.10
+pywinpty>=2.0; sys_platform == "win32"
+# 托盘客户端（tray.py）：pystray 画托盘图标/菜单，Pillow 画图标和二维码窗口
+pystray>=0.19; sys_platform == "win32"
+Pillow>=9.0; sys_platform == "win32"

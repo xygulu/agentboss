@@ -1,0 +1,6 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <!-- agentboss 产品覆盖：不能只靠 base 的默认值——每条线都显式自证产品线（2026-11-20） -->
+    <string name="app_name">代理工头</string>
+    <string name="cb_product">agentboss</string>
+</resources>

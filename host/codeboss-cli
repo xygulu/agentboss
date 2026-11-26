@@ -1,0 +1,505 @@
+#!/bin/bash
+# bosshost —— BossHost 工头主机 · Linux 命令行客户端（装好后终端直接输入 bosshost 就是菜单；
+# 老名字 codeboss 作为软链别名保留）。
+# 和 macOS 菜单栏 App 同一套产品功能，只是实现不同：每个菜单项对应一条子命令，
+# 脚本/SSH 里也能直接用。Windows 版是托盘客户端（tray.py），菜单项与 mac 一一对应。
+#   bosshost                菜单（非交互环境只打印状态）
+#   bosshost status         服务状态
+#   bosshost qr             显示配对二维码（别名 pair = mac 的「扫这个码接上…」）
+#   bosshost sessions       会话列表
+#   bosshost start|stop     启动 / 停止服务（停止=彻底停用，开机不再自启）
+#   bosshost restart        重启服务
+#   bosshost reinstall      重新安装服务（覆盖程序，保留数据）
+#   bosshost uninstall [--purge]   卸载服务（--purge 连数据一起删）
+#   bosshost account        套餐与续费（打印/打开账号页）
+#   bosshost logs [-f]      日志
+#   bosshost update         检查并安装更新
+set -u
+
+CB_LABEL="${CB_LABEL:-codeboss}"
+
+# 找到安装目录：~/.local/bin/codeboss 是指向 <安装目录>/codeboss-cli 的软链，
+# 读脚本自身的真实路径就是安装目录；CB_HOME 可显式指定（自测用）。
+_self="$(readlink -f "$0" 2>/dev/null || echo "$0")"
+_here="$(cd "$(dirname "$_self")" 2>/dev/null && pwd)"
+HERE=""
+for _c in "${CB_HOME:-}" "$_here" "${XDG_DATA_HOME:-$HOME/.local/share}/codeboss"; do
+  [ -n "$_c" ] || continue
+  if [ -f "$_c/server.py" ]; then HERE="$_c"; break; fi
+done
+if [ -z "$HERE" ]; then
+  echo "✗ 找不到 BossHost 安装目录。先在安装包里运行 install-linux.sh。" >&2
+  exit 1
+fi
+PY="$HERE/.venv/bin/python"
+[ -x "$PY" ] || PY="python3"
+VERSION="$(tr -d '[:space:]' < "$HERE/VERSION" 2>/dev/null)"
+IS_MAC=0
+[ "$(uname -s 2>/dev/null)" = "Darwin" ] && IS_MAC=1
+_UID="$(id -u)"
+# macOS 上偶尔也会用这条命令（或自测），服务和菜单栏 App 用同一个 launchd label
+M_LABEL="${CB_MAC_LABEL:-com.xuxingyu.codeboss}"
+M_PLIST="$HOME/Library/LaunchAgents/$M_LABEL.plist"
+
+if [ -t 1 ]; then
+  B=$'\033[1m'; G=$'\033[32m'; R=$'\033[31m'; Y=$'\033[33m'; D=$'\033[2m'; N=$'\033[0m'
+else
+  B=""; G=""; R=""; Y=""; D=""; N=""
+fi
+_ok()  { echo "  ${G}✓${N} $*"; }
+_bad() { echo "  ${R}✗${N} $*"; }
+_mut() { echo "  ${D}· $*${N}"; }
+
+# ── 探测 ────────────────────────────────────────────────────────────
+_cfg_relay() {
+  "$PY" - "$HERE/config.json" 2>/dev/null <<'PY'
+import json, sys
+try:
+    r = (json.load(open(sys.argv[1])).get("relay") or {})
+except Exception:
+    r = {}
+print((r.get("url") or "").rstrip("/").replace(
+    "relay.example.com", "relay.example.com"))
+PY
+}
+_enrolled() {
+  "$PY" - "$HERE/config.json" 2>/dev/null <<'PY'
+import json, sys
+try:
+    r = (json.load(open(sys.argv[1])).get("relay") or {})
+except Exception:
+    r = {}
+sys.exit(0 if (r.get("device_id") and r.get("device_secret")) else 1)
+PY
+}
+# 灰度按设备 ID 认人：不带这一下，检查更新永远只看全员基线（会误报「中继版本更旧」）
+_relay_dev() {
+  "$PY" - "$HERE/config.json" 2>/dev/null <<'PY'
+import json, sys
+try:
+    r = (json.load(open(sys.argv[1])).get("relay") or {})
+except Exception:
+    r = {}
+print((r.get("device_id") or "").strip()[:32])
+PY
+}
+_has_unit() {
+  if [ "$IS_MAC" = 1 ]; then [ -f "$M_PLIST" ]
+  else [ -f "${XDG_CONFIG_HOME:-$HOME/.config}/systemd/user/$CB_LABEL.service" ]; fi
+}
+_enabled() {
+  if [ "$IS_MAC" = 1 ]; then
+    [ -f "$M_PLIST" ] || return 1
+    ! launchctl print-disabled "gui/$_UID" 2>/dev/null | grep -q "\"$M_LABEL\" => true"
+    return
+  fi
+  systemctl --user is-enabled --quiet "$CB_LABEL" 2>/dev/null
+}
+_active() {
+  if [ "$IS_MAC" = 1 ]; then
+    launchctl print "gui/$_UID/$M_LABEL" 2>/dev/null | grep -Eq 'pid = [0-9]+' || \
+      pgrep -f "$HERE/server.py" >/dev/null 2>&1
+    return
+  fi
+  systemctl --user is-active --quiet "$CB_LABEL" 2>/dev/null && return 0
+  pgrep -f "$HERE/server.py" >/dev/null 2>&1
+}
+_pid() {
+  local p
+  if [ "$IS_MAC" = 1 ]; then
+    p="$(launchctl print "gui/$_UID/$M_LABEL" 2>/dev/null | sed -n 's/.*pid = \([0-9][0-9]*\).*/\1/p' | head -n1)"
+  else
+    p="$(systemctl --user show -p MainPID --value "$CB_LABEL" 2>/dev/null)"
+    case "$p" in ""|0) p="$(pgrep -f "$HERE/server.py" 2>/dev/null | head -n1)" ;; esac
+  fi
+  [ -n "$p" ] && echo "$p"
+}
+
+# 安装完整性：缺了这些文件，进程一起来就 ModuleNotFoundError，而 VERSION 还是新的
+# （2026-11-21：pet/ 没落地的那台，update 一句「已是最新版」就再也修不回来）。
+_missing_files() {
+  local m=""
+  [ -f "$HERE/server.py" ] || m="$m server.py"
+  [ -f "$HERE/requirements.txt" ] || m="$m requirements.txt"
+  if [ -f "$HERE/server_impl.pyc" ] || [ -f "$HERE/server_impl.py" ]; then
+    if [ ! -f "$HERE/pet/__init__.pyc" ] && [ ! -f "$HERE/pet/__init__.py" ]; then
+      m="$m pet/"
+    fi
+  fi
+  printf '%s' "${m# }"
+}
+
+# 服务的启停：Linux 用 systemd --user；macOS 用 launchctl（等价于菜单栏 App 里的那组调用）
+_svc_start() {
+  if [ "$IS_MAC" = 1 ]; then
+    launchctl enable "gui/$_UID/$M_LABEL" 2>/dev/null || true
+    [ -f "$M_PLIST" ] && launchctl bootstrap "gui/$_UID" "$M_PLIST" 2>/dev/null || true
+    launchctl kickstart -k "gui/$_UID/$M_LABEL" 2>/dev/null
+  else
+    systemctl --user enable "$CB_LABEL" >/dev/null 2>&1 || true
+    # 别吞错：SSH 里没有用户总线（XDG_RUNTIME_DIR 不在了）时 start 会直接失败，
+    # 吞掉就只剩「服务没起来」，谁也不知道为什么（2026-11-21 用户实测）。
+    _e="$(systemctl --user start "$CB_LABEL" 2>&1)"
+    if [ -n "$_e" ]; then
+      echo "  ${R}✗${N} systemctl --user: $_e" >&2
+      if [ -z "${XDG_RUNTIME_DIR:-}" ]; then
+        echo "  ${D}· SSH 会话里多半没有用户总线：export XDG_RUNTIME_DIR=/run/user/$_UID 再试${N}" >&2
+      fi
+    fi
+  fi
+}
+_svc_stop() {
+  if [ "$IS_MAC" = 1 ]; then
+    launchctl bootout "gui/$_UID/$M_LABEL" 2>/dev/null
+    launchctl disable "gui/$_UID/$M_LABEL" 2>/dev/null
+  else
+    systemctl --user stop "$CB_LABEL" 2>/dev/null
+    systemctl --user disable "$CB_LABEL" >/dev/null 2>&1
+  fi
+}
+_svc_restart() {
+  if [ "$IS_MAC" = 1 ]; then
+    launchctl kickstart -k "gui/$_UID/$M_LABEL" 2>/dev/null
+  else
+    systemctl --user restart "$CB_LABEL" 2>/dev/null
+  fi
+}
+_lan_ip() {
+  local ip
+  ip="$(hostname -I 2>/dev/null | awk '{print $1}')"
+  [ -n "$ip" ] || ip="$(ip route get 1.1.1.1 2>/dev/null | awk '{print $7; exit}')"
+  echo "${ip:-127.0.0.1}"
+}
+_relay_url() {
+  local r="${CB_RELAY:-$(_cfg_relay)}"
+  echo "${r:-https://relay.example.com}"
+}
+
+# ── 命令 ────────────────────────────────────────────────────────────
+cmd_status() {
+  local pid
+  echo "${B}BossHost 工头主机${N}  ${D}v${VERSION:-?}${N}"
+  if ! _has_unit; then
+    if [ "$IS_MAC" = 1 ]; then
+      echo "  服务   ${Y}○ 未安装${N}   ${D}用 BossHost.app 或 install.sh 安装${N}"
+    else
+      echo "  服务   ${Y}○ 未安装${N}   ${D}运行安装包里的 install-linux.sh${N}"
+    fi
+  elif _active; then
+    pid="$(_pid)"
+    if _enabled; then
+      echo "  服务   ${G}● 运行中${N}${pid:+ ${D}(PID $pid)${N}}   ${D}开机自启${N}"
+    else
+      echo "  服务   ${G}● 运行中${N}${pid:+ ${D}(PID $pid)${N}}   ${Y}已停用开机自启${N}"
+    fi
+  else
+    echo "  服务   ${R}○ 已停止${N}   ${D}bosshost start 启动${N}"
+  fi
+  if _enrolled; then
+    echo "  中继   已登记"
+  else
+    echo "  中继   ${Y}未登记${N}   ${D}bosshost qr 登记并出码${N}"
+  fi
+  echo "  局域网 http://$(_lan_ip):8790"
+}
+
+cmd_qr() {
+  if _enrolled; then
+    "$PY" "$HERE/server.py" --paircode
+  else
+    local relay
+    relay="$(_relay_url)"
+    echo "== 登记这台开发机 =="
+    if "$PY" "$HERE/server.py" --enroll "$relay" "$(hostname)"; then
+      _svc_restart || true
+    else
+      _bad "登记失败（这台机器通外网吗？）。局域网内仍可用：http://$(_lan_ip):8790"
+      return 1
+    fi
+  fi
+  echo ""
+  echo "  ${D}手机打开工头 App（口袋工头 / 代理工头） →「接入开发机」→「📷 扫码接入」，扫上面的二维码（码 15 分钟有效）${N}"
+}
+
+cmd_sessions() {
+  _active || { _bad "服务没在运行，先 bosshost start"; return 1; }
+  [ -f "$HERE/token.txt" ] || { _bad "读不到 ${HERE}/token.txt"; return 1; }
+  # 密钥在 python 里从 token.txt 读，不进命令行/环境变量
+  "$PY" - "$HERE/token.txt" <<'PY'
+import json, sys, urllib.request
+tok = ""
+try:
+    for line in open(sys.argv[1], encoding="utf-8"):
+        line = line.strip()
+        if line and not line.startswith("#"):
+            tok = line; break
+except OSError:
+    pass
+try:
+    req = urllib.request.Request("http://127.0.0.1:8790/api/sessions",
+                                 headers={"Cookie": "codeboss_t=" + tok})
+    d = json.loads(urllib.request.urlopen(req, timeout=8).read())
+except Exception:
+    print("  （取不到会话列表：服务刚起来？稍等再试）"); raise SystemExit(0)
+ss = d.get("sessions") or []
+if not ss:
+    print("  （没有会话。终端里敲 claude 就会出现在手机上）"); raise SystemExit(0)
+print("  %-28s %-10s %s" % ("名称", "状态", "目录"))
+for s in ss[:20]:
+    name = (s.get("name") or s.get("sid") or "")[:26]
+    if s.get("alive"):
+        st = "运行中"
+        if s.get("clients"):
+            st += " %d端" % s["clients"]
+    else:
+        st = "已退出"
+    cwd = (s.get("cwd") or "")
+    home = __import__("os").path.expanduser("~")
+    if home and cwd.startswith(home):
+        cwd = "~" + cwd[len(home):]
+    print("  %-28s %-10s %s" % (name, st, cwd))
+if len(ss) > 20:
+    print("  … 还有 %d 个" % (len(ss) - 20))
+PY
+}
+
+cmd_start() {
+  if ! _has_unit; then
+    if [ "$IS_MAC" = 1 ]; then _bad "服务还没安装。用 BossHost.app 或安装包里的 install.sh"
+    else _bad "服务还没安装。运行安装包里的 install-linux.sh"; fi
+    return 1
+  fi
+  _svc_start
+  sleep 1
+  if _active; then _ok "服务已启动（开机自启已恢复）"; return 0; fi
+  _bad "服务没起来，看日志：bosshost logs"
+  local _m; _m="$(_missing_files)"
+  [ -n "$_m" ] && _bad "安装目录缺 ${_m}——跑 bosshost update 会自动整包重修"
+  return 1
+}
+
+cmd_stop() {
+  # 与 macOS 客户端一致：停止 = 彻底停用，开机也不再自启；codeboss start 恢复。
+  _svc_stop
+  if _has_unit && ! _active && ! _enabled; then
+    _ok "服务已停止（开机不再自启，需要时 bosshost start）"
+    return 0
+  fi
+  # 没有 systemd 单元（手工起的）就退到按进程停
+  pkill -f "$HERE/server.py" 2>/dev/null && { sleep 1; }
+  if _active; then _bad "停止失败"; return 1; fi
+  _ok "服务已停止"
+}
+
+cmd_restart() {
+  _svc_restart || {
+    _bad "重启失败（服务没装好？先 bosshost reinstall）"; return 1; }
+  sleep 1
+  if _active; then _ok "服务已重启"; else _bad "服务没起来，看日志：bosshost logs"; return 1; fi
+}
+
+cmd_reinstall() {
+  local s
+  if [ "$IS_MAC" = 1 ]; then s="$HERE/install.sh"; else s="$HERE/install-linux.sh"; fi
+  [ -f "$s" ] || { _bad "安装目录里没有 $(basename "$s")"; return 1; }
+  echo "· 覆盖安装（程序文件更新，token/会话/配置都保留）…"
+  bash "$s"
+}
+
+cmd_uninstall_menu() {
+  echo "  卸载本机的 BossHost 服务"
+  echo "  ${B}1${N} 只卸载服务（保留 token/会话/配置，随时可重装）"
+  echo "  ${B}2${N} 彻底删除（连虚拟环境、会话记录、密钥一起清掉，不可恢复）"
+  echo "  ${B}0${N} 取消"
+  printf '  选择> '
+  local a; read -r a || return 0
+  case "$a" in
+    1) cmd_uninstall ;;
+    2) cmd_uninstall --purge ;;
+    0|"") _mut "已取消" ;;
+    *)    _mut "没有这个选项：$a" ;;
+  esac
+}
+
+cmd_uninstall() {
+  local purge="${1:-}"
+  if [ "$purge" = "--purge" ]; then
+    printf '彻底删除？连虚拟环境、会话记录、密钥一起清掉，不可恢复。输入 yes 确认：'
+    local a; read -r a
+    [ "$a" = "yes" ] || { _mut "已取消"; return 0; }
+  fi
+  _svc_stop
+  if [ "$IS_MAC" = 1 ]; then
+    rm -f "$M_PLIST"
+  else
+    rm -f "${XDG_CONFIG_HOME:-$HOME/.config}/systemd/user/$CB_LABEL.service"
+    systemctl --user daemon-reload 2>/dev/null || true
+  fi
+  if [ "$purge" = "--purge" ]; then
+    if [ "$IS_MAC" = 1 ] && [ -f "$HERE/uninstall.sh" ]; then
+      bash "$HERE/uninstall.sh" --purge
+    elif [ ! "$IS_MAC" = 1 ] && [ -f "$HERE/uninstall-linux.sh" ]; then
+      bash "$HERE/uninstall-linux.sh" --purge
+    else
+      rm -rf "$HERE/.venv" "$HERE/logs" "$HERE/token.txt" "$HERE/sessions.json" \
+             "$HERE/config.json" "$HERE/codeboss.db" "$HERE/__pycache__"
+    fi
+    _ok "已彻底删除"
+  else
+    _ok "服务已卸载（数据保留在 ${HERE}；重装运行安装脚本）"
+  fi
+}
+
+cmd_account() {
+  local u
+  u="$(_relay_url)/r/account"
+  echo "  套餐与续费：$u"
+  if [ -n "${DISPLAY:-}${WAYLAND_DISPLAY:-}" ] && command -v xdg-open >/dev/null 2>&1; then
+    xdg-open "$u" >/dev/null 2>&1 && _mut "已在浏览器打开"
+  fi
+}
+
+cmd_logs() {
+  if [ "$IS_MAC" = 1 ]; then
+    [ -f "$HERE/logs/server.log" ] || { _bad "没有日志"; return 1; }
+    tail -n 60 ${1:+"$1"} "$HERE/logs/server.log"
+  elif systemctl --user cat "$CB_LABEL" >/dev/null 2>&1; then
+    _out="$(journalctl --user -u "$CB_LABEL" -n 60 --no-pager ${1:+"$1"} 2>&1)"
+    case "$_out" in
+      ""|*"No journal files"*|*"-- No entries --"*)
+        # 有的机器（容器/精简 VM）根本没跑 journald：退回自己的 server.log，
+        # 别只甩一句「No journal files were found」。
+        if [ -f "$HERE/logs/server.log" ]; then
+          tail -n 60 ${1:+"$1"} "$HERE/logs/server.log"
+        else
+          echo "$_out"; _bad "也没有 ${HERE}/logs/server.log"
+        fi ;;
+      *) printf '%s\n' "$_out" ;;
+    esac
+  else
+    [ -f "$HERE/logs/server.log" ] || { _bad "没有日志"; return 1; }
+    tail -n 60 ${1:+"$1"} "$HERE/logs/server.log"
+  fi
+}
+
+cmd_update() {
+  local relay json ver size sha url tmp dir got dev
+  relay="$(_relay_url)"
+  echo "· 检查更新（${relay}）…"
+  dev="$(_relay_dev)"
+  json="$(curl -fsS -m 20 "$relay/api/host_ver${dev:+?dev=$dev}" 2>/dev/null)" || {
+    _bad "连不上中继（这台机器能上外网吗？）"; return 1; }
+  ver="$("$PY" -c 'import json,sys;print(json.loads(sys.stdin.read()).get("ver") or "")' <<<"$json" 2>/dev/null)"
+  sha="$("$PY" -c 'import json,sys;print(json.loads(sys.stdin.read()).get("sha256") or "")' <<<"$json" 2>/dev/null)"
+  size="$("$PY" -c 'import json,sys;print(json.loads(sys.stdin.read()).get("size") or 0)' <<<"$json" 2>/dev/null)"
+  url="$("$PY" -c 'import json,sys;print(json.loads(sys.stdin.read()).get("url") or "")' <<<"$json" 2>/dev/null)"
+  [ -n "$ver" ] || { _bad "中继没给出可用版本"; return 1; }
+  # 版本号一样不代表装完整：2026-11-21 那台 VERSION 已经写成新号、pet/ 却没落地，
+  # update 一句「已是最新版」就把它永远留在起不来的状态。缺文件就整包重修。
+  local _miss; _miss="$(_missing_files)"
+  if [ "$ver" = "$VERSION" ] && [ -z "$_miss" ]; then
+    _ok "已是最新版 v${VERSION}"
+    return 0
+  fi
+  if [ -z "$_miss" ] && [ "$(printf '%s\n%s\n' "$VERSION" "$ver" | sort -V | tail -n1)" = "$VERSION" ]; then
+    _ok "本地 v${VERSION} 比中继的 v${ver} 还新，不降级"
+    return 0
+  fi
+  [ -n "$_miss" ] && echo "· 安装目录缺：${_miss}（整包重修）"
+  echo "· 发现 v${ver}（当前 v${VERSION}，${size:-?} 字节），下载…"
+  [ -n "$url" ] || url="/codeboss-host.tar.gz"
+  case "$url" in /*) url="$relay$url" ;; esac
+  tmp="$(mktemp -d)"
+  trap 'rm -rf "$tmp"' RETURN
+  curl -fsSL -m 300 -o "$tmp/pkg.tgz" "$url" || { _bad "下载失败"; return 1; }
+  if [ -n "$sha" ] && command -v sha256sum >/dev/null 2>&1; then
+    got="$(sha256sum "$tmp/pkg.tgz" | awk '{print $1}')"
+    [ "$got" = "$sha" ] || { _bad "校验失败（下载不完整或被改动），已放弃"; return 1; }
+  fi
+  tar -xzf "$tmp/pkg.tgz" -C "$tmp" 2>/dev/null || { _bad "包解不开"; return 1; }
+  dir="$(find "$tmp" -maxdepth 1 -type d -name 'codeboss-*' | head -n1)"
+  local inst="install-linux.sh"
+  [ "$IS_MAC" = 1 ] && inst="install.sh"
+  [ -n "$dir" ] && [ -f "$dir/$inst" ] || { _bad "包里没有安装脚本"; return 1; }
+  echo "· 安装（程序文件覆盖，配置/会话/密钥都保留）…"
+  bash "$dir/$inst" || { _bad "安装失败，旧版本仍在"; return 1; }
+  _ok "已更新到 v${ver}"
+}
+
+cmd_help() {
+  cat <<EOF
+${B}bosshost${N} —— BossHost 工头主机 · Linux 命令行客户端（v${VERSION:-?}）
+
+  bosshost             打开菜单（状态 + 常用操作）
+  bosshost status      查看服务状态
+  bosshost qr          显示配对二维码，手机扫码绑定（别名 pair）
+  bosshost sessions    会话列表
+  bosshost start       启动服务（恢复开机自启）
+  bosshost stop        停止服务（彻底停用，开机不再自启）
+  bosshost restart     重启服务
+  bosshost reinstall   重新安装服务（覆盖程序，保留数据）
+  bosshost uninstall [--purge]   卸载服务（--purge 连数据一起删）
+  bosshost account     套餐与续费
+  bosshost logs [-f]   看日志（-f 跟着滚）
+  bosshost update      检查并安装更新
+  bosshost help        本帮助
+
+  安装目录：${HERE}
+  服务单元：systemctl --user status ${CB_LABEL}
+EOF
+}
+
+cmd_menu() {
+  local c
+  while :; do
+    # 更新/重装完 VERSION 已经变了，菜单还挂着启动时读的旧值——每轮重读一次
+    VERSION="$(tr -d '[:space:]' < "$HERE/VERSION" 2>/dev/null)"
+    echo
+    cmd_status
+    echo
+    echo "  ${B}1${N} 扫这个码接上…（配对二维码）"
+    echo "  ${B}2${N} 查看会话列表"
+    echo "  ${B}3${N} $(_active && echo 停止服务（开机不再自启） || echo 启动服务)"
+    echo "  ${B}4${N} 重新安装服务（覆盖，保留数据）    ${B}5${N} 检查更新"
+    echo "  ${B}6${N} 套餐与续费                        ${B}7${N} 查看日志"
+    echo "  ${B}8${N} 卸载服务                          ${B}0${N} 退出"
+    printf '  选择> '
+    read -r c || exit 0
+    echo
+    case "$c" in
+      1|qr|pair)   cmd_qr ;;
+      2|sessions)  cmd_sessions ;;
+      3)           if _active; then cmd_stop; else cmd_start; fi ;;
+      4|reinstall) cmd_reinstall ;;
+      5|update)    cmd_update ;;
+      6|account)   cmd_account ;;
+      7|logs)      cmd_logs ;;
+      8|uninstall) cmd_uninstall_menu ;;
+      0|q|quit|exit) exit 0 ;;
+      *)           _mut "没有这个选项：$c" ;;
+    esac
+  done
+}
+
+cmd="${1:-}"
+case "$cmd" in
+  ""|menu)        if [ -t 0 ]; then cmd_menu; else cmd_status; fi ;;
+  status|st)      cmd_status ;;
+  qr|pair|enroll) cmd_qr ;;
+  sessions|sess)  cmd_sessions ;;
+  start)          cmd_start ;;
+  stop)           cmd_stop ;;
+  restart|reload) cmd_restart ;;
+  reinstall)      cmd_reinstall ;;
+  uninstall)      shift; cmd_uninstall "${1:-}" ;;
+  account|pay)    cmd_account ;;
+  logs|log)       shift; cmd_logs "${1:-}" ;;
+  update|upgrade) cmd_update ;;
+  version|-v|--version) echo "${VERSION:-?}" ;;
+  help|-h|--help) cmd_help ;;
+  *)
+    _bad "不认识的命令：$cmd"
+    echo
+    cmd_help
+    exit 1 ;;
+esac

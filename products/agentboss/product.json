@@ -1,0 +1,8 @@
+{
+  "app_label": "代理工头",
+  "cb_product": "agentboss",
+  "face_agents": null,
+  "keystore": "clients/android/keystores/agentboss.keystore",
+  "version_code": 16,
+  "version_name": "0.1.14"
+}

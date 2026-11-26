@@ -1,0 +1,73 @@
+name: Codeboss
+options:
+  createIntermediateGroups: true
+  deploymentTarget:
+    iOS: "15.0"
+settings:
+  base:
+    SWIFT_VERSION: "5.0"
+    DEVELOPMENT_TEAM: 8J6H7W5M7S
+    CODE_SIGN_STYLE: Automatic
+targets:
+  Codeboss:
+    type: application
+    platform: iOS
+    sources:
+      - path: Codeboss
+    settings:
+      base:
+        PRODUCT_BUNDLE_IDENTIFIER: com.example.codeboss.ios
+        PRODUCT_NAME: Codeboss
+        TARGETED_DEVICE_FAMILY: "1,2"
+        ASSETCATALOG_COMPILER_APPICON_NAME: AppIcon
+        ENABLE_USER_SCRIPT_SANDBOXING: "NO"
+    info:
+      path: Codeboss/Info.plist
+      properties:
+        CFBundleDisplayName: 口袋工头
+        CFBundleShortVersionString: "0.2.31"
+        CFBundleVersion: "35"
+        # 壳的产品线（种 cb_product cookie 用；中继把它搬成 X-Product 给 host 判面）
+        CBProduct: codeboss
+        # 只用了系统 HTTPS，属于出口管制豁免；不写这条 TestFlight 上传后会卡在
+        # 「缺少出口合规信息」，每个 build 都要手点一次。
+        ITSAppUsesNonExemptEncryption: false
+        LSRequiresIPhoneOS: true
+        UILaunchScreen: {}
+        # iOS 26 起链接新 SDK 的 App 不接 UIScene 生命周期会在启动时直接崩
+        # （0.2.20 在 iOS 27.2.1 上秒退就是这个），窗口改由 SceneDelegate 建。
+        UIApplicationSceneManifest:
+          UIApplicationSupportsMultipleScenes: false
+          UISceneConfigurations:
+            UIWindowSceneSessionRoleApplication:
+              - UISceneConfigurationName: Default Configuration
+                UISceneDelegateClassName: $(PRODUCT_MODULE_NAME).SceneDelegate
+        UIRequiresFullScreen: true
+        UIStatusBarHidden: true
+        UIViewControllerBasedStatusBarAppearance: true
+        UISupportedInterfaceOrientations:
+          - UIInterfaceOrientationPortrait
+          - UIInterfaceOrientationLandscapeLeft
+          - UIInterfaceOrientationLandscapeRight
+        UISupportedInterfaceOrientations~ipad:
+          - UIInterfaceOrientationPortrait
+          - UIInterfaceOrientationPortraitUpsideDown
+          - UIInterfaceOrientationLandscapeLeft
+          - UIInterfaceOrientationLandscapeRight
+        NSCameraUsageDescription: 扫码配对开发机需要用到相机。
+        NSMicrophoneUsageDescription: 按住说话需要用到麦克风。
+        NSLocalNetworkUsageDescription: 连接局域网内的 Codeboss 开发机。
+        NSAppTransportSecurity:
+          # 不再全局关 ATS：只需要「WebView 内容可以打局域网 http」+「本地网络」两条。
+          # 全局关掉会把壳里所有 URLSession 也一起降级明文（App Store 审核也会问）。
+          NSAllowsLocalNetworking: true
+          # 页面从 https://中继 加载，但要去打开发机在局域网的 http://192.168.x.x:8790
+          # （探针/直连都走这个）。WKWebView 只认 NSAllowsArbitraryLoadsInWebContent
+          # —— 光有 NSAllowsArbitraryLoads 对网页内容不生效，http 请求会被
+          # 「Blocked loading of insecure resource」拦掉，表现就是同一个局域网
+          # 也一直显示「中继转发」。
+          NSAllowsArbitraryLoadsInWebContent: true
+        CFBundleURLTypes:
+          - CFBundleURLName: com.example.codeboss.ios
+            CFBundleURLSchemes:
+              - codeboss

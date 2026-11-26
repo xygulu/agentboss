@@ -1,0 +1,111 @@
+<!doctype html>
+<html lang="zh-CN">
+<meta charset="utf-8">
+<title>桌宠模拟器</title>
+<style>
+  body { margin: 0; background: #111; color: #eee; font: 16px/1.6 -apple-system, sans-serif;
+         display: flex; flex-direction: column; align-items: center; justify-content: center;
+         height: 100vh; gap: 12px; }
+  #face { font-size: 120px; transition: transform .15s; }
+  #line { max-width: 32em; min-height: 3em; text-align: center; color: #ffd166; }
+  #status { font-size: 13px; color: #9ad; min-height: 1.5em; }
+  #log { font-size: 11px; color: #666; max-width: 40em; word-break: break-all; }
+  .bar { display: flex; gap: 6px; }
+  button { background: #222; color: #ddd; border: 1px solid #444; border-radius: 6px;
+           padding: 4px 10px; font: inherit; font-size: 13px; cursor: pointer; }
+  button:hover { background: #333; }
+</style>
+<div id="face">👷</div>
+<div id="line">连上了就说话。</div>
+<div id="status"></div>
+<div class="bar">
+  <button data-presence="desk">桌前</button>
+  <button data-presence="away">离开</button>
+  <button data-presence="uncertain">不确定</button>
+</div>
+<div class="bar">
+  <button data-kind="perm">拍板</button>
+  <button data-kind="stuck">卡住</button>
+  <button data-kind="done">完成</button>
+</div>
+<div class="bar">
+  <select id="persona"></select>
+</div>
+<div id="log"></div>
+<audio id="audio"></audio>
+<script>
+const pt = new URLSearchParams(location.search).get("pt") || "";
+const ws = new WebSocket((location.protocol === "https:" ? "wss://" : "ws://")
+                         + location.host + "/api/pet/ws?pt=" + encodeURIComponent(pt));
+const face = document.getElementById("face");
+const line = document.getElementById("line");
+const statusEl = document.getElementById("status");
+const log = document.getElementById("log");
+const audio = document.getElementById("audio");
+const personaSel = document.getElementById("persona");
+let curRef = "";
+
+function post(path, body) {
+  return fetch(path + "?pt=" + encodeURIComponent(pt), {
+    method: "POST", headers: {"Content-Type": "application/json"},
+    body: JSON.stringify(body || {}),
+  }).catch((e) => { log.textContent = String(e); });
+}
+
+audio.onended = () => {
+  if (curRef) { ws.send(JSON.stringify({t: "played", ref: curRef})); curRef = ""; }
+};
+
+ws.onmessage = (e) => {
+  const m = JSON.parse(e.data);
+  log.textContent = JSON.stringify(m).slice(0, 300);
+  if (m.type === "hello") {
+    line.textContent = "工头在。";
+    if (Array.isArray(m.personas)) {
+      personaSel.innerHTML = "";
+      for (const p of m.personas) {
+        const o = document.createElement("option");
+        o.value = p.id; o.textContent = p.name;
+        if (p.id === m.persona) o.selected = true;
+        personaSel.appendChild(o);
+      }
+    }
+  }
+  if (m.type === "say") {
+    line.textContent = m.line || "";
+    face.style.transform = "scale(1.1)";
+    setTimeout(() => face.style.transform = "", 300);
+    curRef = m.ref || "";
+    if (m.audio) {
+      audio.src = m.audio + "?pt=" + encodeURIComponent(pt);
+      audio.play().catch(() => { curRef = ""; });
+    } else {
+      curRef = "";
+    }
+  }
+  if (m.type === "badge" && m.badge) {
+    statusEl.textContent = m.badge.project + " · " + m.badge.status;
+  }
+  if (m.type === "persona" && personaSel) personaSel.value = m.id;
+};
+ws.onopen = () => line.textContent = "工头在。";
+ws.onclose = () => line.textContent = "断开了。";
+
+personaSel.onchange = () => post("/api/pet/persona", {id: personaSel.value});
+
+const IDLE = {desk: 0, uncertain: 60, away: 120};
+for (const b of document.querySelectorAll("button[data-presence]")) {
+  b.onclick = () => {
+    log.textContent = "在场 → " + b.dataset.presence;
+    post("/api/pet/sim/presence", {idle_s: IDLE[b.dataset.presence]});
+  };
+}
+
+for (const b of document.querySelectorAll("button[data-kind]")) {
+  b.onclick = () => {
+    log.textContent = "事件 → " + b.dataset.kind;
+    post("/api/pet/sim/event", {kind: b.dataset.kind, title: "模拟项目"});
+  };
+}
+</script>
+</html>

@@ -1,0 +1,1366 @@
+<!doctype html><html lang="zh-CN"><head><meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1,maximum-scale=1,viewport-fit=cover">
+<meta name="format-detection" content="telephone=no,email=no,address=no">
+<title>__TITLE__</title>
+<link rel="icon" type="image/png" href="__FAVICON__">
+<link rel="stylesheet" href="/static/xterm.css">
+<script>
+@@JS:boot@@
+</script>
+<script src="/static/xterm.js"></script>
+<style>
+:root{color-scheme:dark;--live-fs:12px;--fs-scale:1;--ime:0px}
+*{box-sizing:border-box}
+html{-webkit-text-size-adjust:100%;text-size-adjust:100%}
+/* 页面本身不滚动：三个面板各自内部滚动（原样页滑动发涩的根因之一就是外层 body 抢滚动） */
+html,body{height:100%;overflow:hidden;max-width:100vw;overscroll-behavior:none}
+/* iOS 键盘：把整页钉在「可见区域」上（--vvh/--vvt 由 visualViewport 算）。
+   键盘一弹 body 就缩到键盘上沿 → 输入条自然贴在键盘上方、顶栏还在顶部，
+   内容区（#deck/#pgCtrl）照旧能滑；不再靠系统把整页顶飞。
+   安卓壳整页上推 --ime 时，非会话页把 body 收成键盘以上那一条（--kbtop，kbLayout 写）——
+   不然搜索框这种靠上的输入框会被整页推出屏幕；会话页不收（输入条要贴键盘，
+   顶栏另用 --hime 反向补偿）。 */
+body{position:fixed;left:0;right:0;top:var(--kbtop,0px);height:calc(var(--vvh,100%) - var(--kbtop,0px));transform:translateY(var(--vvt,0px))}
+body{margin:0;background:#0a0a0a;color:#f5f5f5;font:16px/1.55 -apple-system,BlinkMacSystemFont,"PingFang SC",sans-serif}
+header{position:fixed;left:0;right:0;top:0;background:rgba(10,10,10,.95);backdrop-filter:blur(10px) saturate(1.1);border-bottom:1px solid #191919;padding:6px 10px 6px;z-index:5;transform:translateY(var(--hime,0px))}
+.hrow{display:flex;justify-content:space-between;align-items:center;gap:8px}
+.hbtn{background:#1a1b1b;color:#cccccc;border:1px solid #191919;border-radius:19px;padding:6px 12px;font-size:13px;white-space:nowrap;font-family:inherit;flex-shrink:0}
+.hbtn.ic{padding:0;width:30px;height:30px;font-size:16px;line-height:1;display:flex;align-items:center;justify-content:center;border-radius:9px}
+.hbtn.ic.bare{background:transparent;border:0;width:36px;height:36px;padding:0}
+/* 左上角图标 + 会员等级合成一块：图标在上、等级小字在下 */
+.hbtn.ic.bare.brand{width:40px;height:40px;padding:0;flex-direction:column;gap:0;border-radius:11px}
+.hbtn.brand svg{width:30px;height:30px;flex:none}
+/* 品牌图标位（内联 base64，省一次请求、老壳也稳）；页头与 favicon 两个占位符由
+   _app_page 按本机产品线换成对应图标（brand_icons.py，两条线各一套）：
+   图标在上、套餐等级小字在下，等级那块照旧由 tierPaint() 填 */
+.hbtn.brand img.plic{width:32px;height:32px;flex:none;display:block;border-radius:8px}
+.hbtn.brand .plevel{font-size:10px;line-height:1;font-weight:700;letter-spacing:.2px;flex:none;margin-top:0}
+/* 电量：数字画在电池体内（iOS 风）；充足绿 / 中段黄 / 低电红橙，充电绿+闪电 */
+.batt{flex:none;display:flex;align-items:center;font-size:10px;font-weight:600;color:#34d399;line-height:1}
+.batt i{display:flex;align-items:center;justify-content:center;position:relative;width:27px;height:12px;border:1px solid currentColor;border-radius:2.5px}
+.batt i::after{content:'';position:absolute;right:-3px;top:3px;width:2px;height:6px;background:currentColor;border-radius:0 1.5px 1.5px 0}
+.batt i::before{content:'';position:absolute;left:2.5px;top:2px;bottom:2px;width:3px;background-repeat:no-repeat;background-position:center;background-size:3px 6px}
+.batt.chg i::before{background-image:url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 10 18'%3E%3Cpath d='M6.5 0 1 10h3.4L3.5 18 9 7.6H5.6z' fill='%23ffffff'/%3E%3C/svg%3E")}
+.batt b{font-weight:700;font-style:normal;font-size:10px;line-height:1;color:#fff;font-family:-apple-system,"SF Pro Text","Helvetica Neue","PingFang SC",Arial,sans-serif;-webkit-font-smoothing:antialiased;font-variant-numeric:tabular-nums;letter-spacing:0;position:relative;z-index:1}
+.batt.chg{color:#34d399}
+.batt.mid{color:#ffb900}
+.batt.low{color:#ff6467}
+.hbtn:active{background:#242424}
+.ht{font-weight:600;font-size:14px;display:flex;align-items:center;justify-content:flex-start;gap:8px;min-width:0;flex:1}
+/* 窄屏：标题截断不出圈，电量只留图标（百分比文字挤掉状态 pills） */
+.ht>#hTitle{overflow:hidden;text-overflow:ellipsis;white-space:nowrap;min-width:0}
+@media (max-width:420px){
+  .ht{font-size:13px}
+  .batt i{width:25px}
+  .hbtn.ic.bare{width:30px;height:30px}
+  .hbtn.ic.bare svg{width:26px;height:26px}
+}
+#hTitle{white-space:nowrap;overflow:hidden;text-overflow:ellipsis;flex:1;min-width:0}
+/* 悬浮按钮：点开"实时/原样/字号"浮层，把原来那一整行按钮的位置让给会话内容 */
+/* 两个圆按钮同一套外观：🎨 在语音键正上方，✕（关闭会话）占原来 🎨 的右上角 */
+.fbtn,#closeSessBtn{position:fixed;right:10px;z-index:6;width:28px;height:28px;padding:0;border-radius:50%;background:rgba(26,27,27,.9);color:#cccccc;border:1px solid #2a2a2a;font-size:13px;line-height:1;display:flex;align-items:center;justify-content:center;box-shadow:0 2px 8px #0008}
+.fbtn{bottom:calc(var(--dockh,100px) + 114px)}
+/* 🎨（视图/字号浮层）今天早上下线过一版，用户当天又要回来（2026-11-19 下午）。
+   标记和 pick()/toggleTabs 一直留着，所以只是撤掉那行 display:none。 */
+#closeSessBtn{top:52px;display:none}
+.fbtn:active,#closeSessBtn:active{background:#242424}
+body:not(.pg1) #tabbtn{display:none}   /* 视图/字号只属于会话页：别在列表页浮一个空按钮 */
+/* 会话状态：标题前那个品牌图标本身就是状态灯，不再单独占一个图标/一行字。
+   在跑=呼吸动，等你=橙色脉冲，空闲=静止，挂起=琥珀半透明，结束=灰掉。
+   状态名和传输方式（推送/轮询）放进 title / aria-label。 */
+/* 标题栏套餐文字：纯文字、无背景无边框，和运行状态同高，只用颜色区分等级。
+   类名用 plevel（别用 .tier：英文档位选项已占用，后定义会把背景/大字号盖回来） */
+.plevel{font-size:12px;font-weight:700;line-height:1.5;padding:0;letter-spacing:.3px;
+  white-space:nowrap;flex-shrink:0;background:none;border:0;border-radius:0}
+.plevel.free{color:#838383}
+.plevel.pro{color:#4b7cf3}
+.plevel.max{color:#ffb900}
+/* 今日远程时长倒计时：半透明小胶囊，浮在会话页麦克风按钮正上方（右侧）。
+   只显示「还剩多久」，Max/不限显示「不限」；点一下进设置看完整明细。 */
+#useFloat{position:fixed;right:10px;bottom:calc(var(--dockh,100px) + 10px);z-index:6;display:none;
+  width:54px;padding:5px 0;border-radius:10px;cursor:pointer;line-height:1.3;overflow:hidden;
+  text-align:center;
+  /* 不叠 backdrop-filter：这块胶囊正压在滑动的面板上方，模糊背景会逼着
+     合成器每一帧重新取样整块区域，低端安卓上翻页发卡的主因之一。 */
+  background:#111111;border:1px solid rgba(48,54,61,.72);
+  box-shadow:0 4px 14px rgba(0,0,0,.35)}
+#useFloat .uf2{font-size:10.5px;font-weight:700;color:#34d399;white-space:nowrap;
+  overflow:hidden;text-overflow:ellipsis;font-variant-numeric:tabular-nums;letter-spacing:.2px}
+/* 第二行：使用时长包还剩多少（余额为 0 时整行藏掉，只显示今天的倒计时） */
+#useFloat .uf3{font-size:9px;font-weight:600;color:#838383;white-space:nowrap;
+  overflow:hidden;text-overflow:ellipsis;font-variant-numeric:tabular-nums;line-height:1.25}
+#useFloat.warn .uf2{color:#ffb900}
+#useFloat.full .uf2{color:#ff6467}
+/* 暂停读秒（没操作 / 息屏 / 断网）：中继那边这一分钟也不记账，数字就该冻住。
+   变淡而不是变灰，停手时一眼能看出「时间没在走」。 */
+#useFloat.pause{opacity:.55}
+/* host 新版本提示：麦克风上方的小圆点（不压标题）；点一下跳到设置页的「开发机服务」
+   更新区并自动检查。其他页面贴在右下角。 */
+#upd{position:fixed;right:10px;bottom:calc(10px + env(safe-area-inset-bottom,0px));z-index:7;display:none;
+  width:24px;height:24px;border-radius:50%;align-items:center;justify-content:center;cursor:pointer;
+  background:#346bf1;color:#fff;font-size:13px;font-weight:700;line-height:1;
+  border:1px solid rgba(255,255,255,.2);box-shadow:0 2px 10px rgba(0,0,0,.45)}
+#upd:active{background:#2c5cd6}
+body.pg1 #upd{bottom:calc(var(--dockh,100px) + 13px);right:70px}   /* 会话页：与倒计时同一行、排在它左侧，互不重叠 */
+#tabs{position:fixed;right:10px;bottom:calc(var(--dockh,100px) + 150px);z-index:12;display:none;grid-template-columns:1fr 1fr;gap:5px;padding:8px;background:#161616;border:1px solid #242424;border-radius:12px;box-shadow:0 10px 26px #000b}
+#tabs.on{display:grid}
+.tab{background:#1a1b1b;color:#cccccc;border:1px solid #2a2a2a;border-radius:8px;padding:9px 14px;font-size:14px;font-family:inherit;text-align:left;width:100%}
+#msheet{display:none;position:fixed;top:0;left:0;right:0;bottom:0;background:#000a;z-index:30}
+#msheet.on{display:block}
+#dsheet{display:none;position:fixed;top:0;left:0;right:0;bottom:0;background:#000a;z-index:30}
+#dsheet.on{display:block}
+#psheet,#esheet,#pwSheet,#beSheet,#phSheet,#cmdsheet,#agsheet,#smsheet,#acctsheet,#dlg{display:none;position:fixed;top:0;left:0;right:0;bottom:0;background:#000a;z-index:31}
+#psheet.on,#esheet.on,#pwSheet.on,#beSheet.on,#phSheet.on,#cmdsheet.on,#agsheet.on,#smsheet.on,#acctsheet.on,#dlg.on{display:block}
+.mbox{position:absolute;left:0;right:0;bottom:0;background:#161616;border:1px solid #242424;border-radius:14px 14px 0 0;padding:14px 14px 20px;padding:14px 14px calc(20px + env(safe-area-inset-bottom,0px));max-height:82vh;overflow:auto}
+/* 产物文件页（批次一）：行式列表 + 预览浮层；入口在输入栏左侧两个图标 */
+#fview{position:fixed;top:0;left:0;right:0;bottom:0;z-index:7;background:rgba(0,0,0,.55);display:none}
+#fview.on{display:block}
+.frow{padding:11px 14px;border-bottom:1px solid #1a1b1b;font-size:14px;cursor:pointer}
+/* 收件箱段控（批次三）：产出物 / 全部文件 */
+.seg{display:flex;gap:6px;padding:8px 14px 0}
+.seg button{flex:1;background:#1a1b1b;border:1px solid #242424;color:#838383;border-radius:8px;padding:7px 0;font-size:13px}
+.seg button.on{background:rgba(52,107,241,.16);border-color:#4b7cf3;color:#cccccc}
+.fgrid{display:grid;grid-template-columns:repeat(2,1fr);gap:8px;padding:8px 14px 14px}
+.fcard{background:#161616;border:1px solid #191919;border-radius:10px;padding:10px;font-size:13px;cursor:pointer;overflow:hidden}
+.fcard:active{background:#1a1b1b}
+.fcard .fic{font-size:20px;line-height:1.2}
+.fcard .fnm{margin-top:4px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.fcard .meta{font-size:11px;color:#838383;margin-top:2px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+/* 圈选（批次三）：全屏拖框裁一块发给 agent */
+#cropPage{position:fixed;top:0;left:0;right:0;bottom:0;z-index:32;background:#000;display:none;flex-direction:column}
+#cropPage.on{display:flex}
+.crophd{flex:none;display:flex;align-items:center;gap:8px;padding:calc(8px + env(safe-area-inset-top,0px)) 12px 8px;color:#cccccc;font-size:13px}
+.crophd .ttl{flex:1;text-align:center}
+#cropBox{flex:1;position:relative;display:flex;align-items:center;justify-content:center;overflow:hidden;touch-action:none}
+#cropImg{max-width:100%;max-height:100%;user-select:none;-webkit-user-select:none;-webkit-user-drag:none}
+#cropRect{position:absolute;display:none;border:2px solid #FFC53D;background:rgba(255,197,61,.12);pointer-events:none}
+/* 终端引用（批次三） */
+#qsheet{display:none;position:fixed;top:0;left:0;right:0;bottom:0;background:#000a;z-index:31}
+#qsheet.on{display:block}
+.qrow{padding:2px 8px;white-space:pre;color:#cccccc;cursor:pointer}
+.qrow.on{background:rgba(75,124,243,.2)}
+.frow:active{background:#1a1b1b}
+#bar .icbtn{flex:0 0 38px;height:38px;background:#1a1b1b;border:1px solid #242424;border-radius:8px;font-size:17px;padding:0}
+.mtitle{font-size:12px;color:#838383;margin:8px 0 4px}
+.prov,.tier{display:flex;justify-content:space-between;align-items:center;gap:8px;padding:10px;background:#1a1b1b;border:1px solid #2a2a2a;border-radius:8px;margin:5px 0;font-size:14px;cursor:pointer}
+.prov>span:first-child>.meta{white-space:nowrap}
+.prov.on,.tier.on{border-color:#4b7cf3;background:rgba(52,107,241,.16)}
+.tab.on{background:#10b981;color:#fff;border-color:#10b981}
+/* 页码指示：三个点 → 三段横线，贴在 header 底边，不占额外高度 */
+#tierBadge{position:absolute;right:21px;bottom:calc(3px + env(safe-area-inset-bottom,0px));transform:translateX(50%);font-size:10px;line-height:1;font-weight:700;letter-spacing:.3px;pointer-events:none}
+#dots{position:absolute;left:0;right:0;bottom:calc(4px + env(safe-area-inset-bottom,0px));height:10px;display:flex;gap:4px;justify-content:center;align-items:flex-end;pointer-events:none}
+.dot{width:18px;height:4px;border-radius:2px;background:#333333;border:0;padding:0;display:inline-block}
+/* 页码点可点：列表 + 每个开着的会话，点了直接跳过去 */
+#dots .dot{pointer-events:auto;cursor:pointer;flex:0 1 auto;min-width:10px;max-width:26px}
+.dot.on{background:#4b7cf3}
+/* 全屏子页（终端列表 / 设置）：从列表入口打开，带 ← 返回；不参与左滑翻页。
+   z-index 压在 #termViewBox(6) 之下：终端浮层要能盖在终端子页上面。 */
+.subpage{position:fixed;left:0;right:0;top:0;bottom:0;z-index:5;background:#0a0a0a;display:none;flex-direction:column}
+.subpage.on{display:flex}
+.subpage>.pg{flex:1 1 auto;height:auto;min-height:0}
+/* 直接放 .pgin 的子页（文件/测试/交付）也要能滚：fixed flex 列里不设 overflow
+   的话超出部分被裁掉，第 3 行以后的文件永远看不到（2026-11-19 反馈）。 */
+.subpage>.pgin{flex:1 1 auto;min-height:0;overflow-y:auto;overflow-x:hidden;
+  -webkit-overflow-scrolling:touch;overscroll-behavior-y:contain}
+.subhd{flex:none;display:flex;align-items:center;gap:8px;padding:calc(8px + env(safe-area-inset-top,0px)) 12px 8px;border-bottom:1px solid #191919}
+.subhd .ttl{flex:1;text-align:center;font-weight:600;font-size:15px}
+.subhd .subw{width:64px;flex:none}
+/* ── 三面板滑动结构：列表(0) / 控制(1) / 详情(2)。右滑出列表、左滑看详情 ── */
+/* 翻页交给浏览器**原生横向滚动 + scroll-snap**：原生滚动的拖拽跑在合成线程上，
+   主线程再忙（数据回包、定时刷新）手指也不会跟丢；以前用 JS 每帧改 transform，
+   低端安卓上主线程一抖就掉帧。纵向滚动仍由每个 .pg 自己管，浏览器按手势方向锁轴。 */
+#deck{position:fixed;left:0;right:0;bottom:var(--dockh,100px);top:104px;background:#0a0a0a;visibility:hidden;
+  overflow-x:auto;overflow-y:hidden;overscroll-behavior-x:contain;
+  scroll-snap-type:x mandatory;-webkit-overflow-scrolling:touch;scrollbar-width:none}
+#deck::-webkit-scrollbar{display:none}
+#track{display:flex;height:100%}
+/* overscroll-behavior 只锁纵向（挡掉下拉刷新/回转），不能写 contain 全轴：
+   面板一旦在横轴上「接管」了手势，横滑就不会冒泡给 #deck，整页翻不动了
+   （安卓 WebView 实测：全轴 contain 时左右怎么划都不动）。 */
+.pg{flex:0 0 100%;width:100%;height:100%;overflow-y:auto;overflow-x:hidden;-webkit-overflow-scrolling:touch;overscroll-behavior-y:contain;
+  scroll-snap-align:start;scroll-snap-stop:always}
+.pg::-webkit-scrollbar{display:none}
+/* 原样视图：滚动交给 xterm 自己的 viewport。外层 .pg 再可滚动就是嵌套滚动，
+   安卓 WebView 里两套滚动容器互相让路，滑起来一顿一顿的。 */
+#pgCtrl.rawmode{overflow:hidden}
+/* 会话页的左右滑 = 换会话（见 nextSess/prevSess）：横向手势交给 JS，
+   纵向照旧归页面自己滚。不加这条的话横向位移会先被 #deck 拿去翻页。 */
+#pgCtrl{touch-action:pan-y}
+/* 换会话的位移加在这一层：不能直接 transform #pgCtrl —— 它自己就是 deck 的滚动格子，
+   被 transform 后浏览器算滚动宽度会少掉这段，scrollLeft 被夹小，左边的列表页就被拉进画面
+   （2026-11-13 实测：拖 -160px，scrollLeft 从 390 掉到 230，整页没动、列表页反而露出来）。 */
+#pgMove{min-height:100%}
+.pgin{padding:12px 16px 30px}
+#pgList .pgin{padding-bottom:92px}   /* 底部悬浮麦克风不压住最后一行 */
+.card{background:#111111;border:1px solid #191919;border-radius:14px;padding:13px 15px;margin-bottom:10px;box-shadow:0 1px 0 rgba(255,255,255,.025) inset,0 1px 3px rgba(0,0,0,.35)}
+.row{display:flex;justify-content:space-between;align-items:center;gap:10px}
+.name{font-weight:600}
+.meta{color:#787878;font-size:12px;word-break:break-all}
+mark.hl{background:#9e6a03;color:#fff;border-radius:3px;padding:0 1px}   /* 搜到的关键词 */
+/* 长会话名：最多两行，超出省略（行高固定，列表不再被撑得高低不齐） */
+.sname{display:-webkit-box;-webkit-line-clamp:2;-webkit-box-orient:vertical;overflow:hidden;word-break:break-word;line-height:1.4;max-height:2.8em}
+/* 目录分组名：一行省略，完整路径靠 title 提示 */
+.dname{white-space:nowrap;overflow:hidden;text-overflow:ellipsis;min-width:0}
+/* 会话行下面那行状态：一行省略（模型名可能很长） */
+.smeta{white-space:nowrap;overflow:hidden;text-overflow:ellipsis;word-break:normal}
+/* 终端浮层：顶栏（.hrow 标题/电量）留给页面自己，浮层从顶栏下沿开始，标题不会消失。
+   键盘弹起时外壳把整页上推 --ime，浮层底边跟着抬到键盘上沿；高度可拖顶部把手调整。 */
+#termViewBox{position:fixed;left:0;right:0;top:auto;bottom:var(--kb,0px);height:var(--termh,72vh);
+  z-index:6;background:#0a0a0a;overflow:hidden}
+/* 顶部拖拽把手：上下拖改高度（底部贴住键盘上沿，变高向上长） */
+#termGrab{position:absolute;left:0;right:0;top:0;height:18px;z-index:3;touch-action:none;
+  display:flex;align-items:center;justify-content:center;cursor:ns-resize}
+#termGrab i{width:42px;height:4px;border-radius:2px;background:#333333}
+#termGrab:active i{background:#4b7cf3}
+/* 顶栏和 iframe 都用绝对定位的 top/bottom：老 WebView 的 flex 拉伸对 iframe 不可靠，
+   iframe 一旦高度为 0，终端里 FitAddon 量不到尺寸 → 一片黑（Qin 2 Pro 实测）。 */
+#termViewBox .tr{position:absolute;left:0;right:0;top:18px;height:38px;z-index:1;
+  display:flex;align-items:center;justify-content:space-between;gap:6px}
+/* iframe 是替换元素：只写 top/bottom 不会拉伸，高度会停在默认 150px → 必须给显式 height */
+#termFrame{position:absolute;left:0;right:0;top:56px;width:100%;height:calc(100% - 56px);border:0;
+  background:#0a0a0a;display:block}
+/* ── 问题建议：工单页（列表 / 详情 / 新建）。整页浮层，必须放 body 层（#track 有 transform） ── */
+#fbPage{position:fixed;left:0;right:0;top:0;bottom:0;z-index:40;background:#0a0a0a;display:none;
+  flex-direction:column}
+#fbPage.on{display:flex}
+/* App 内页（套餐 / 条款 / 隐私）：和「问题建议」同一套头栏——返回一律在左上角、同一个样子 */
+#cbSheet{position:fixed;left:0;right:0;top:0;bottom:0;z-index:41;background:#0a0a0a;display:none;
+  flex-direction:column}
+#cbSheet.on{display:flex}
+#cbSheet iframe{flex:1;width:100%;min-height:0;border:0;background:#0a0a0a;display:block}
+#fbHd,#cbHd{display:flex;align-items:center;gap:8px;flex:none;padding:8px 10px;
+  padding-top:calc(8px + env(safe-area-inset-top,0px));border-bottom:1px solid #191919;background:#0a0a0a}
+#fbHd .ttl,#cbHd .ttl{flex:1;min-width:0;text-align:center;font-size:14px;font-weight:600;color:#f5f5f5;
+  overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+#fbBody{flex:1;min-height:0;overflow-y:auto;-webkit-overflow-scrolling:touch;
+  padding:12px 12px calc(24px + env(safe-area-inset-bottom,0px))}
+.fbcard{background:#111111;border:1px solid #191919;border-radius:13px;padding:12px 14px;margin-bottom:10px}
+.fbcard.tap{cursor:pointer}
+.fbcard.tap:active{background:#1a1b1b}
+.fbtop{display:flex;align-items:center;gap:8px;margin-bottom:7px}
+.fbkind{font-size:11px;color:#8d8d8d;border:1px solid #242424;border-radius:20px;padding:2px 9px;flex:none}
+.fbstate{font-size:11px;border-radius:20px;padding:2px 9px;margin-left:auto;flex:none}
+.fbstate.s0{color:#ffb900;border:1px solid rgba(227,179,65,.45)}
+.fbstate.s1{color:#4b7cf3;border:1px solid rgba(75,124,243,.38)}
+.fbstate.s2{color:#838383;border:1px solid #242424}
+.fbtext{font-size:14px;color:#f5f5f5;line-height:1.65;white-space:pre-wrap;word-break:break-word}
+.fbtext.clamp{display:-webkit-box;-webkit-line-clamp:3;-webkit-box-orient:vertical;overflow:hidden}
+.fbmeta{font-size:11.5px;color:#787878;margin-top:7px;line-height:1.6}
+.fbmedia{display:flex;flex-wrap:wrap;gap:6px;margin-top:8px}
+.fbmedia img,.fbmedia video{width:82px;height:82px;object-fit:cover;border-radius:8px;
+  border:1px solid #191919;background:#0a0a0a;display:block}
+.fbbub{border-radius:12px;padding:9px 11px;margin-top:8px;font-size:13.5px;line-height:1.65;
+  white-space:pre-wrap;word-break:break-word}
+.fbbub.u{background:#121b34;color:#cccccc}
+.fbbub.a{background:#122619;color:#d9eadf;border:1px solid rgba(16,185,129,.32)}
+.fbwho{font-size:11px;color:#787878;margin:10px 0 3px}
+.fbrow{display:flex;gap:8px;align-items:flex-end;margin-top:12px}
+.fbrow textarea{flex:1;min-height:44px;max-height:130px;padding:10px;font-size:14px;line-height:1.5;
+  resize:none;background:#111111;color:#f5f5f5;border:1px solid #191919;border-radius:10px;
+  font-family:inherit;outline:none;box-sizing:border-box}
+.fbrow textarea::placeholder{color:#3d3d3d}
+.fbrow button{flex:none;padding:11px 16px}
+.fbclosed{font-size:12px;color:#838383;text-align:center;padding:14px 0 0;margin-top:12px;
+  border-top:1px solid #191919}
+.fbempty{text-align:center;color:#787878;font-size:13px;padding:40px 10px;line-height:1.8}
+.fbform .tr{display:flex;align-items:center;gap:9px;min-height:44px;padding:5px 0;border-top:1px solid #1a1b1b}
+.fbform .card>.tr:first-child{border-top:0}
+.fbform .tl{font-size:13.5px;color:#cccccc;flex:none;min-width:44px}
+.fbform .sg{display:flex;gap:5px;margin-left:auto}
+.fbform .sg button{height:28px;padding:0 12px;font-size:12.5px;border-radius:8px;
+  border:1px solid #242424;background:#141414;color:#8d8d8d}
+.fbform .sg button.on{background:#10b981!important;border-color:#10b981;color:#fff!important}
+.fbform textarea{width:100%;box-sizing:border-box;min-height:92px;margin:4px 0 8px;padding:10px;
+  background:var(--inp,#111111);color:var(--txt,#f5f5f5);border:1px solid #191919;border-radius:10px;
+  font-size:14px;line-height:1.6;resize:vertical;outline:none;font-family:inherit}
+.fbform .gray{background:#1a1b1b;border:1px solid #242424;color:#cccccc}
+/* ── 提醒历史：整页浮层（body 层） ── */
+#nhPage{position:fixed;left:0;right:0;top:0;bottom:0;z-index:41;background:#0a0a0a;display:none;
+  flex-direction:column}
+#nhPage.on{display:flex}
+#nhHd{display:flex;align-items:center;gap:8px;flex:none;padding:8px 10px;
+  padding-top:calc(8px + env(safe-area-inset-top,0px));border-bottom:1px solid #191919;background:#0a0a0a}
+#nhHd .ttl{flex:1;min-width:0;text-align:center;font-size:14px;font-weight:600;color:#f5f5f5;
+  overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+/* ── 列表页两个子页：收件箱（核心，默认）/ 会话 ── */
+#listTabs{display:flex;gap:4px;margin:2px 0 10px;padding:0;border:0;background:none}
+#listTabs .lt{flex:1;height:36px;border:0;border-radius:18px;background:transparent;color:#838383;
+  font-size:13.5px;font-weight:600;font-family:inherit}
+#listTabs .lt.on{background:#1a1b1b;color:#f5f5f5;font-weight:700}
+#listTabs .lt .n{display:inline-block;min-width:18px;margin-left:6px;padding:0 5px;border-radius:9px;
+  background:#f0a43c;color:#0a0a0a;font-size:11.5px;line-height:18px;vertical-align:1px}
+#ibPane{display:none}
+#pgList.ibview #ibPane{display:block}
+#ibPane .ibGrp{color:#f0a43c;font-weight:600}
+/* 收件箱视图：会话侧的东西全收起来（tab 是页签，不是卡片入口） */
+#pgList.ibview #bindCard,#pgList.ibview #agBar,#pgList.ibview #modelCard,
+#pgList.ibview #newSessCard,#pgList.ibview #list,
+#pgList.ibview #newTermCard,#pgList.ibview #termEntryCard{display:none!important}
+#nhChips{display:flex;gap:6px;padding:9px 12px 3px;flex:none;overflow-x:auto;
+  -webkit-overflow-scrolling:touch}
+#nhChips::-webkit-scrollbar{display:none}
+#nhChips button{flex:none;padding:5px 11px;font-size:12px;border-radius:15px;border:1px solid #242424;
+  background:#141414;color:#8d8d8d}
+#nhChips button.on{background:#121b34;border-color:#2b3f8f;color:#4b7cf3}
+#nhBody{flex:1;min-height:0;overflow-y:auto;-webkit-overflow-scrolling:touch;
+  padding:2px 12px calc(24px + env(safe-area-inset-bottom,0px));overscroll-behavior:contain}
+.nhDay{position:sticky;top:0;z-index:2;background:#0a0a0a;padding:10px 2px 6px;font-size:12px;
+  color:#838383;font-weight:600;letter-spacing:.3px}
+.nhCard{background:#111111;border:1px solid #191919;border-radius:13px;padding:11px 13px;margin-bottom:10px}
+.nhSess{display:flex;align-items:center;gap:8px;margin-bottom:4px}
+.nhSess .t{flex:1;min-width:0;font-weight:600;font-size:13.5px;color:#f5f5f5;overflow:hidden;
+  text-overflow:ellipsis;white-space:nowrap}
+.nhSess .c{flex:none;font-size:11px;color:#787878;border:1px solid #242424;border-radius:20px;
+  padding:1px 8px}
+.nhEv{display:flex;gap:9px;padding:8px 0 0}
+.nhTime{flex:none;width:38px;font-size:11.5px;color:#787878;padding-top:2px;
+  font-variant-numeric:tabular-nums}
+.nhDot{flex:none;width:7px;height:7px;border-radius:50%;margin-top:6px;background:#34d399}
+.nhDot.perm{background:#ffb900}
+.nhDot.input,.nhDot.ask{background:#4b7cf3}
+.nhDot.limit,.nhDot.stuck{background:#ff6467}
+.nhMain{flex:1;min-width:0;padding-bottom:2px}
+.nhTop{display:flex;align-items:center;gap:7px}
+.nhKind{font-size:11px;color:#8d8d8d;border:1px solid #242424;border-radius:20px;padding:1px 8px;flex:none}
+/* 提醒健康：这一页不再只是流水账，先给一眼能看的账——近七天多少条、几条在等你、
+   有几条是模型改判的、有几条待确认问句因为编的/做完还问被丢掉。数据就在每条的
+   trace 里（host 判定时顺手写的），不另开接口。 */
+.nhHp{margin:0 0 10px;padding:9px 11px;border:1px solid #242424;border-radius:10px;
+  background:#141414;font-size:12px;color:#8d8d8d;line-height:1.9}
+.nhHp b{color:#f5f5f5;font-weight:600;font-size:13px;margin:0 2px}
+.nhHp .warn b{color:#ffb900}
+.nhHp .bad b{color:#f0883e}
+.nhHp .nhHpWhy{margin-top:3px;font-size:11.5px;color:#3d3d3d}
+.nhTr{font-size:10.5px;color:#787878;border:1px solid #242424;border-radius:20px;
+  padding:0 6px;flex:none}
+.nhTr.bad{color:#ffb900;border-color:#3d3620}
+.nhCause{margin-top:5px;font-size:12.5px;color:#8a8a8a;line-height:1.5;word-break:break-word}
+.nhCause span{display:inline-block;margin-right:6px;font-size:10.5px;color:#787878;
+  border:1px solid #242424;border-radius:20px;padding:0 6px;vertical-align:1px}
+.nhTxt{font-size:13.5px;color:#cccccc;line-height:1.6;word-break:break-word;margin-top:4px;
+  white-space:pre-wrap;flex:1;min-width:0}
+/* 原文：有概括时折成一行（结论看概括就够），点一下展开全文 */
+.nhRaw{display:flex;gap:6px;align-items:flex-start;margin-top:5px}
+.nhRaw .nhTxt{margin-top:0}
+.nhTag{flex:none;margin-top:3px;font-size:10.5px;color:#787878;border:1px solid #242424;
+  border-radius:20px;padding:0 6px;line-height:15px}
+.nhTxt.fold{display:-webkit-box;-webkit-line-clamp:1;-webkit-box-orient:vertical;
+  overflow:hidden;color:#8d8d8d;cursor:pointer}
+.nhSum{margin-top:6px;padding:7px 9px;border-left:2px solid #10b981;background:#0f1b13;
+  border-radius:0 8px 8px 0;font-size:13px;color:#d9eadf;line-height:1.6;word-break:break-word}
+/* 要你拍板的那件事（模型单独给的一句问句），别和「这轮结果」混在一起 */
+.nhNeed{margin-top:6px;padding:7px 9px;border-left:2px solid #d29922;background:#1d1a0e;
+  border-radius:0 8px 8px 0;font-size:13px;color:#f0d090;line-height:1.6;word-break:break-word}
+.nhNeed span{display:inline-block;margin-right:6px;font-size:10.5px;color:#c9a227;
+  border:1px solid #3d3620;border-radius:20px;padding:0 6px;vertical-align:1px}
+/* 未处理的「待确认/待回复」：一键带到输入框 */
+.nhAct{margin-top:8px;display:flex;align-items:center;gap:8px}
+.nhBtn{padding:5px 15px;font-size:12.5px;border-radius:8px;border:1px solid #2b3f8f;
+  background:#121b34;color:#4b7cf3;font-family:inherit}
+.nhBtn:active{background:#1d2547}
+.nhWait{font-size:11.5px;color:#8d8d8d}
+.nhDone{font-size:11.5px;color:#34d399}
+.nhRep{font-size:11px;color:#ffb900;margin-top:5px}
+.nhEmpty{text-align:center;color:#787878;font-size:13px;padding:40px 10px;line-height:1.8}
+.nhSessGap{border-top:1px solid #1a1b1b;margin-top:8px}
+/* 命令终端页：每个终端一张卡片（不再挤在一张列表卡里） */
+.tcard{display:flex;align-items:flex-start;gap:10px;padding:12px 14px;cursor:pointer}
+.tcard:active{background:#1f1f1f}
+.tcard .dot{width:8px;height:8px;border-radius:50%;background:#34d399;flex:none;margin-top:6px}
+.tcard .dot.off{background:#404040}
+.tcard .grow{flex:1;min-width:0}
+.tcard .tname{font-weight:600;font-size:13.5px;color:#f5f5f5;overflow:hidden;
+  text-overflow:ellipsis;white-space:nowrap}
+.tcard .tpath{font-size:11.5px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;
+  margin-top:2px;color:#787878}
+/* 卡片里的终端内容：最后几行等宽预览，点击整卡进入终端 */
+.tcard .tprev{margin-top:8px;padding:6px 8px;background:#0a0a0a;border:1px solid #191919;
+  border-radius:7px;font-family:Menlo,"SF Mono",monospace;font-size:11px;line-height:1.45;
+  color:#8d8d8d;white-space:pre-wrap;word-break:break-all;max-height:56px;overflow:hidden}
+.tcard .tprev:empty{display:none}
+.tcard .tprev .tcur{color:#f5f5f5}
+.tcard button{flex:none;align-self:flex-start}
+.live{color:#34d399}.dead{color:#838383}
+.nb{color:#ffb900;font-weight:600}
+.prow{display:flex;justify-content:space-between;align-items:baseline;gap:10px;padding:2px 2px 8px}
+/* T3 列表骨架：会话行无边、贴底色、分隔线分行；分组头改「文字—线」 */
+#list .prow{padding:14px 2px 6px;align-items:center}
+#list .prow .name{font-size:13px;font-weight:600;color:#838383;letter-spacing:.2px}
+#list .gline{flex:1;height:1px;background:#191919;margin:0 6px 0 10px}
+#list .card{background:none;border:0;border-radius:0;box-shadow:none;padding:14px 0 4px;margin:0}
+#list .card:active{background:#141414}
+#list .card:last-child{border-bottom:0}
+#list .card .name{font-size:16px;color:#f5f5f5}
+/* agent 徽章：两字母 + 品牌色暗底 tint（T3 avatar chip 语言） */
+.sic.chip{font-size:11px;font-weight:700;letter-spacing:.3px}
+.chip.c-claude{color:#e39a7d;background:rgba(217,119,87,.14)}
+.chip.c-codex{color:#7ecfc0;background:rgba(47,191,155,.13)}
+.chip.c-opencode{color:#c9a0ff;background:rgba(192,132,252,.14)}
+.chip.c-hermes{color:#7ea0ff;background:rgba(52,107,241,.14)}
+.chip.c-web{color:#838383;background:#1a1b1b}
+.srow{display:flex;justify-content:space-between;align-items:center;gap:10px;padding:13px 2px;border-top:0;border-bottom:1px solid #191919;border-left:0;-webkit-touch-callout:none;-webkit-user-select:none;user-select:none}
+/* 命令弹层行：命令文本等宽 + ▶ 运行 */
+.crow{display:flex;align-items:center;gap:8px;padding:8px 2px;border-top:1px solid #191919}
+.crow:first-child{border-top:0}
+.trow{display:flex;align-items:center;gap:10px;padding:10px 12px;border-top:1px solid #191919;cursor:pointer}
+.trow:first-child{border-top:0}
+.trow .dot{width:8px;height:8px;border-radius:50%;background:#34d399;flex:none}
+.trow .dot.off{background:#404040}
+.ccmd{flex:1;min-width:0;font-family:ui-monospace,Menlo,monospace;font-size:12px;color:#f5f5f5;word-break:break-all}
+.crun{background:#238636;border:0;color:#fff;border-radius:7px;padding:6px 12px;font-size:13px;font-weight:600;flex:none}
+.crun.warn{background:#9e6a03}
+.crun.warn.arm{background:#ff6467}
+.crun.del{background:#b62324}
+.crun.del.arm{background:#ff6467}
+.srow.sel{background:#1a1b1b;border-radius:12px}
+.srow.tap:active{background:#141414}
+.sic{flex-shrink:0;width:30px;height:30px;display:flex;align-items:center;justify-content:center;text-align:center;font-size:14px;background:#1a1b1b;border-radius:9px}
+.fc{font-size:12px;margin-left:2px}
+.idle{color:#d29922}
+/* agent 标识：列表里同时有 Claude / Codex 时才显示，只用一个词区分，不抢标题 */
+.ag{display:inline-flex;align-items:center;padding:1px 4px;border-radius:4px;margin-right:5px;white-space:nowrap}
+.ag svg{width:12px;height:12px;display:block;fill:currentColor;transform-box:fill-box;transform-origin:center}
+/* 标题栏的静音指示：免打扰/静音时红喇叭划掉，否则灰喇叭 */
+.hm{display:inline-flex;align-items:center;flex:none;color:#838383}
+.hm.q{color:#ff6467}
+/* 标题里的品牌图标不要底色（2026-11-21 用户）：只留图标本身的颜色 */
+.ag.claude{color:#d97757}
+.ag.codex{color:#2fbf9b}
+/* 品牌图标的状态表现：在跑=转起来、等你=橙色快闪、挂起=半透明、结束=灰掉 */
+.ag.run svg{animation:agrun 1.5s linear infinite}
+.ag.wait{color:#f0a43c}
+.ag.wait svg{animation:agwait .7s ease-in-out infinite}
+.ag.susp{opacity:.55}
+.ag.off{opacity:.35;filter:grayscale(1)}
+@keyframes agrun{0%{transform:rotate(0deg)}100%{transform:rotate(360deg)}}
+@keyframes agwait{0%,100%{transform:scale(1);opacity:1}50%{transform:scale(.72);opacity:.25}}
+/* 标题文字也带状态，比只看图标明显：在跑=高光从左到右扫过，等你=橙色明暗呼吸，挂起/结束=变淡 */
+#hTitle.run{background-image:linear-gradient(90deg,#3d3d3d 20%,#cccccc 38%,#ffffff 47%,#a8dcff 50%,#ffffff 53%,#cccccc 62%,#3d3d3d 80%);
+  background-size:200% 100%;-webkit-background-clip:text;background-clip:text;-webkit-text-fill-color:transparent;
+  animation:hshine 2s linear infinite}
+/* 高光带用各自的品牌亮色（Claude 亮橙 / Codex 亮青），比中性天蓝醒目 */
+.ag.claude~#hTitle.run{background-image:linear-gradient(90deg,#3d3d3d 18%,#e39a7d 36%,#ff8a5c 47%,#ffe2d4 50%,#ff8a5c 53%,#e39a7d 64%,#3d3d3d 82%)}
+.ag.codex~#hTitle.run{background-image:linear-gradient(90deg,#3d3d3d 18%,#2fbf9b 36%,#5cffd8 47%,#eafffb 50%,#5cffd8 53%,#2fbf9b 64%,#3d3d3d 82%)}
+@keyframes hshine{from{background-position:120% 0}to{background-position:-20% 0}}
+#hTitle.wait{color:#f0a43c;animation:hblink .9s ease-in-out infinite}
+@keyframes hblink{0%,100%{opacity:1}50%{opacity:.45}}
+#hTitle.susp{opacity:.6}
+#hTitle.off{opacity:.45;color:#838383}
+/* agent 切换条（Claude / Codex / 以后加的 hermes、openclaw…）：
+   装了两种以上才出现，决定列表看谁、模型切谁、＋ 默认开谁 */
+#agBar{display:none;gap:6px;margin:0 2px 10px}
+.agtab{flex:1;min-width:0;padding:9px 4px;border-radius:18px;border:0;
+  background:transparent;color:#838383;font-size:13px;font-weight:600;line-height:1.2;
+  white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.agtab.on{color:#f5f5f5;border-color:#388bfd66;background:#346bf122}
+button.agtab.on::before{content:none}
+.agtab.on.claude{color:#d97757;border-color:rgba(217,119,87,.5);background:rgba(217,119,87,.13)}
+.agtab.on.codex{color:#2fbf9b;border-color:rgba(47,191,155,.5);background:rgba(47,191,155,.13)}
+.sbtn{display:flex;gap:6px;flex-shrink:0;align-items:center}
+.ib{background:#141414;color:#838383;border:1px solid #242424;border-radius:8px;padding:7px 9px;font-size:12px;line-height:1.2;text-decoration:none;display:inline-block;min-width:32px;text-align:center}
+.ib:active{background:#242424}
+/* 列表行上的按钮要塞下四五个（详情/命令/fork/删除），比别处再收一点 */
+.ib.sm{padding:6px 6px;min-width:28px;font-size:12px}
+.del{color:#ff6467}
+a.btn,button{background:#10b981;color:#fff;border:0;border-radius:8px;padding:9px 14px;font-size:14px;text-decoration:none;display:inline-block;font-family:inherit}
+button.gray{background:#1a1b1b;border:1px solid #242424;color:#cccccc}
+/* 分段开关的选中态：两选一按钮组，当前项点亮 */
+button.gray.on{background:#10b981!important;border-color:#10b981;color:#fff!important}
+button.gray.on::before{content:'✓ '}
+input{background:#0a0a0a;border:1px solid #242424;color:#f5f5f5;border-radius:8px;padding:9px 10px;width:100%;font-size:14px;box-sizing:border-box;font-family:inherit}
+/* 滑条（亮度/音量）：盖掉上面的输入框底色；accent-color 老内核不认就落系统默认样式，无害 */
+input[type=range]{background:none;border:none;padding:0;width:auto;flex:1;height:26px;accent-color:#10b981}
+/* 护眼模式：全屏暖色薄纱（pointer-events:none 不挡操作，盖在一切之上） */
+#dimmer{position:fixed;left:0;right:0;top:0;bottom:0;pointer-events:none;background:#000;opacity:0;z-index:2147482900;display:none}
+#eyeguard{position:fixed;left:0;right:0;top:0;bottom:0;pointer-events:none;background:#ff9329;opacity:.13;z-index:2147483000;display:none}
+body.eye #eyeguard{display:block}
+body.eyeSys #eyeguard{display:none}   /* 壳的悬浮层已罩全屏（含键盘），页面层让位避免双重叠色 */
+label{display:block;font-size:12px;color:#787878;margin:10px 0 4px}
+.drow{display:flex;justify-content:space-between;align-items:baseline;gap:12px;padding:8px 0;border-top:1px solid #191919;font-size:14px}
+.drow:first-child{border-top:0}
+.drow>span:first-child{color:#787878;flex-shrink:0}
+.drow>span:last-child{word-break:break-all;text-align:right}
+/* ── 设置页：紧凑行式布局（一行一项，开关/分段在右），只作用于 #pgVoice ── */
+#pgVoice .pgin{padding:12px 12px 36px}
+#pgVoice .grp{font-size:11.5px;font-weight:600;color:#3d3d3d;letter-spacing:1.4px;
+  padding:0 4px 7px;margin-top:14px}
+#pgVoice .grp:first-child{margin-top:2px}
+/* T3 式组头（窗口核心 Phase 1）：小字标签—填充横线—chevron，可点折叠（cb_setgrp 记忆） */
+#pgVoice .grp.t3g{display:-webkit-flex;display:flex;-webkit-align-items:center;align-items:center;
+  gap:8px;cursor:pointer;padding:0 4px 7px}
+#pgVoice .grp.t3g .gl-line{-webkit-flex:1;flex:1;height:1px;background:#232323}
+#pgVoice .grp.t3g .gchev{color:#3d3d3d;font-size:13px;display:inline-block;
+  -webkit-transition:-webkit-transform .15s;transition:transform .15s}
+#pgVoice .grp.t3g.closed .gchev{-webkit-transform:rotate(90deg);transform:rotate(90deg)}
+#pgVoice .card{padding:0 14px;border-radius:13px;margin-bottom:2px}
+#pgVoice .tr{display:flex;align-items:center;gap:9px;min-height:46px;padding:5px 0;
+  border-top:1px solid #1a1b1b}
+#pgVoice .card>.tr:first-child{border-top:0}
+#pgVoice .tl{font-size:13.5px;color:#cccccc;flex:none;min-width:56px}
+#pgVoice .tv{font-size:13px;color:#838383;margin-left:auto;text-align:right;
+  min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+/* 免打扰起止时间格：值用 <b> 常显，原生 time 输入透明铺满（见 ext.html 的 dndSet 注释） */
+#pgVoice .tbtn{position:relative;flex:1;min-width:0;height:36px;display:flex;align-items:center;
+  justify-content:center;background:#161616;border:1px solid #2a2a2a;border-radius:8px;color:#f5f5f5;
+  font-size:15px;letter-spacing:.5px}
+#pgVoice .tbtn b{font-weight:500;pointer-events:none}
+#pgVoice .tbtn input{position:absolute;left:0;top:0;width:100%;height:100%;opacity:0;border:0;
+  padding:0;margin:0;background:transparent;-webkit-appearance:none;appearance:none;font-size:16px}
+#pgVoice .tsw,#pgVoice .go{cursor:pointer}
+#pgVoice .tsw:active,#pgVoice .go:active{background:#141414}
+/* 语音输入现在任何页面都能用（搜索/派单/反馈…），麦克风常驻：
+   壳的 shim 自己只认 body.pg1，页面这里用更高优先级把它盖出来（不用重装 App）。 */
+html body #cbshim_mic{display:flex!important}
+#pgVoice .chev{margin-left:auto;color:#5a5a5a;font-size:17px;line-height:1}
+#pgVoice .sg{display:flex;gap:5px;margin-left:auto}
+#pgVoice .sg.grow{flex:1;margin-left:0}
+#pgVoice .sg button{height:28px;padding:0 12px;font-size:12.5px;line-height:26px;border-radius:8px;
+  border:1px solid #242424;background:#141414;color:#8d8d8d}
+#pgVoice .sg button.on{background:#10b981!important;border-color:#10b981;color:#fff!important}
+#pgVoice .sg.grow button{flex:1}
+#pgVoice .mini{height:28px;flex:none;padding:0 11px;font-size:12.5px;border-radius:8px}
+#pgVoice .mini.on{background:#10b981!important;border-color:#10b981;color:#fff!important}
+#pgVoice .sw{display:block;margin-left:auto;flex:none;position:relative;width:42px;height:25px;
+  border-radius:13px;background:#191919;transition:background .16s}
+#pgVoice .sw::after{content:'';position:absolute;top:2px;left:2px;width:21px;height:21px;
+  border-radius:50%;background:#787878;transition:transform .16s,background .16s}
+#pgVoice .sw.on{background:#10b981}
+#pgVoice .sw.on::after{transform:translateX(17px);background:#fff}
+#pgVoice input{height:34px;font-size:13px;border-radius:9px;padding:0 10px;margin:0}
+#pgVoice input[type=range]{flex:1;min-width:0;height:auto;padding:0;border:0;background:none}
+#pgVoice .meta{font-size:11.5px;line-height:1.6;color:#ff6467;padding-bottom:8px}
+#pgVoice .meta:empty{display:none}
+/* 列表页顶部开发机条：扁平的一行工具条（无卡片底、只留底部分隔线），
+   和下面一张张会话卡明确区分开 */
+#devBar{display:flex;align-items:center;gap:8px;padding:5px 2px 11px;margin-bottom:9px;
+  border-bottom:1px solid #1a1b1b}
+#devBar .devsel{flex:1;min-width:0;height:36px;padding:0 30px 0 12px;margin:0;
+  border:1px solid #191919;border-radius:10px;background-color:#141414;color:#cccccc;
+  font-size:13.5px;font-weight:500;line-height:34px;-webkit-appearance:none;appearance:none;
+  background-image:linear-gradient(45deg,transparent 50%,#787878 50%),linear-gradient(135deg,#787878 50%,transparent 50%);
+  background-position:calc(100% - 16px) 15px,calc(100% - 11px) 15px;
+  background-size:5px 5px,5px 5px;background-repeat:no-repeat}
+#devBar .devsel:active{border-color:#3a3a3a}
+#devBar .devbtn{flex:none;width:36px;height:36px;padding:0;margin:0;border:1px solid #191919;
+  border-radius:10px;background:#141414;color:#cccccc;font-size:16px;line-height:1;font-family:inherit}
+#devBar .devbtn:active{background:#1f1f1f}
+#devBar .devbtn:disabled{opacity:.35}
+/* ── 控制面板原有样式 ── */
+#feed{display:none;padding:12px 12px 160px;font-size:calc(15px*var(--fs-scale))}  /* 聊天墙跟随 A－/A+：默认 1 倍=原 15px 不变 */
+.m{margin-bottom:12px;display:flex;flex-direction:column}
+.m.user{align-items:flex-end}
+.bub{max-width:85%;padding:10px 14px;border-radius:20px;white-space:pre-wrap;word-break:break-word}
+.user .bub{background:#161616;color:#f5f5f5;border-radius:20px;border-bottom-right-radius:6px}
+.assistant .bub{background:none;border:0;padding-left:2px;padding-right:2px}
+.tool{margin-top:6px;font:12px/1.5 ui-monospace,Menlo,monospace;color:#838383;background:#0a0a0a;border:1px solid #191919;border-radius:8px;padding:6px 9px;max-width:88%;white-space:pre-wrap;word-break:break-all}
+.dur{margin:4px 0 0 4px;font:12px/1.5 ui-monospace,Menlo,monospace;color:#838383}
+/* 状态行（正在思考/正在读取…）跟「用时」一样只走灰字，不占卡片位、不画框 */
+.dstat{margin-top:6px;font:12px/1.5 ui-monospace,Menlo,monospace;color:#838383;background:none;border:0;padding:0;border-radius:0}
+/* 消息里提到的本地图片/视频：直接嵌进对话墙，点图片全屏 */
+.media{margin-top:6px}
+.media img,.media video{max-width:100%;max-height:60vh;border-radius:8px;display:block}
+.media audio{width:100%}
+.media video{min-height:120px;background:#000}
+/* agent 说起的文档（设计文档/方案/报告）：一张卡，点开即看。
+   老 WebView（Chrome 70）不认 flex 的 gap，间距用 margin 给。 */
+.docs{margin-top:6px}
+.dcard{display:flex;align-items:center;padding:10px 12px;margin-top:6px;cursor:pointer;
+  border:1px solid #191919;border-radius:10px;background:#161616}
+.dcard .dic{margin-right:8px}
+.dcard .dname{flex:1;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;
+  font-size:13px;color:#cccccc}
+.dcard .dact{margin-left:8px;font-size:12px;color:#4b7cf3}
+#fvReview{display:none;margin-top:12px}
+#fvReview.on{display:flex}
+#fvReview button{flex:1;margin-top:0}
+#fvReview button+button{margin-left:8px}
+/* 工头递文档（2026-11-20 用户：不只放产出物里，会话里要直接浮出来）：
+   这一轮 agent 写了文档就浮一条，点「查看」直接进预览页。贴在快捷键条上沿。 */
+#docBar{position:fixed;left:8px;right:8px;bottom:calc(var(--dockh,100px) + 8px);z-index:6;
+  display:none;align-items:center;padding:10px 12px;border-radius:12px;background:#111111;
+  border:1px solid rgba(75,124,243,.38);color:#f5f5f5;box-shadow:0 6px 18px rgba(0,0,0,.4)}
+#docBar.on{display:flex}
+#docBar .dic{margin-right:8px;flex:none}
+#docBar .dtext{flex:1;min-width:0}
+#docBar .dname{font-size:14px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+#docBar .dmeta{font-size:12px;color:#838383;margin-top:2px;overflow:hidden;text-overflow:ellipsis;
+  white-space:nowrap}
+#docBar .dopen{flex:none;margin-left:8px;background:#346bf1;color:#fff;border:0;border-radius:9px;
+  padding:7px 13px;font-size:13px;font-weight:700;font-family:inherit}
+#docBar .dclose{flex:none;margin-left:6px;background:none;border:0;color:#838383;
+  font-size:18px;line-height:1;padding:2px 6px;font-family:inherit}
+.mst{margin-top:4px;font:12px/1.5 -apple-system,sans-serif;color:#838383}
+.mfail{margin-top:4px;font:12px/1.5 -apple-system,sans-serif;color:#d29922;background:#1a1b1b;
+  border:1px dashed #3a3222;border-radius:6px;padding:6px 8px;display:inline-block}
+#bigimg{position:fixed;top:0;left:0;right:0;bottom:0;background:rgba(0,0,0,.94);display:none;align-items:center;justify-content:center;z-index:9999}
+#bigimg img{max-width:100%;max-height:100%}
+.tool{cursor:pointer}
+.tool b::after{content:' ▸'}
+.tool.open b::after{content:' ▾'}
+.tdet{display:block;margin-top:2px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.tool.open .tdet{white-space:pre-wrap;word-break:break-all}
+.tool b{color:#d29922;font-weight:600}
+/* 助手气泡按 markdown 排版（Codex 桌面版的回答是 md 原文） */
+.bub.md{white-space:normal}
+.bub.md p{margin:6px 0}
+.bub.md p:first-child{margin-top:0}
+.bub.md p:last-child{margin-bottom:0}
+.bub.md h1,.bub.md h2,.bub.md h3,.bub.md h4{margin:12px 0 6px;line-height:1.4;font-weight:600}
+.bub.md h1{font-size:1.25em}
+.bub.md h2{font-size:1.15em}
+.bub.md h3,.bub.md h4{font-size:1.05em}
+.bub.md ul,.bub.md ol{margin:6px 0;padding-left:20px}
+.bub.md li{margin:3px 0}
+.bub.md code{background:#1a1b1b;border:1px solid #191919;border-radius:4px;padding:0 4px;
+  font:0.9em/1.5 ui-monospace,Menlo,monospace;word-break:break-word}
+.bub.md pre{background:#0a0a0a;border:1px solid #191919;border-radius:8px;padding:8px 10px;
+  margin:8px 0;overflow-x:auto}
+.bub.md pre code{background:none;border:0;padding:0;font-size:0.86em;line-height:1.55;white-space:pre}
+.bub.md blockquote{margin:8px 0;padding:2px 10px;border-left:3px solid #2a2a2a;color:#8d8d8d}
+.bub.md a{color:#4b7cf3;text-decoration:none;word-break:break-all}
+.bub.md hr{border:0;border-top:1px solid #191919;margin:10px 0}
+#live{display:none;margin:0;padding:12px;font:11.5px/1.5 ui-monospace,Menlo,monospace;color:#cccccc;background:#0a0a0a;white-space:pre-wrap;word-break:break-all;-webkit-touch-callout:default;-webkit-user-select:text;user-select:text}
+#livehist,.livehist{display:none;padding:12px 12px 0;font-size:var(--live-fs);-webkit-touch-callout:default;-webkit-user-select:text;user-select:text}
+#liveflow,.liveflow{display:none;padding:6px 14px;font-family:-apple-system,BlinkMacSystemFont,"PingFang SC",sans-serif;font-size:var(--live-fs);line-height:1.62;color:#f5f5f5;-webkit-touch-callout:default;-webkit-user-select:text;user-select:text}
+/* 换会话的「下一页」预排层：把相邻会话的正文提前排好版放在屏幕外。
+   滑动时两页一起动（都是合成线程的 transform），底下真正换内容放在它盖满屏幕之后做——
+   滑动中间不再有排版/重绘，手感和列表页的原生翻页一致。 */
+.pvpage{position:fixed;left:0;right:0;top:104px;bottom:var(--dockh,100px);z-index:1;display:none;
+  background:#0a0a0a;overflow:hidden;pointer-events:none;will-change:transform;contain:layout paint}
+.pvpage .livehist,.pvpage .liveflow{display:block}
+.p{white-space:pre-wrap;overflow-wrap:anywhere;margin:0 0 2px}
+.blk{margin:6px 0;overflow-x:auto;-webkit-overflow-scrolling:touch;background:#0a0a0a;border:1px solid #191919;border-radius:8px}
+/* 代码/表格：字号由服务端按终端列数算好（整屏一个值）。正常情况下每行都在 cols 内，
+   正好铺满；只有硬折行回并出来的超宽行才需要换行——以前靠横向滚动，手机上看不到
+   右边的内容（该换行的没换）。pre-wrap 保留缩进，任何超宽行在这行内折到下一行。 */
+.blk pre{margin:0;padding:8px 10px;font-family:ui-monospace,Menlo,monospace;font-size:calc(var(--live-fs)*0.8333);line-height:1.55;display:inline-block;min-width:96%;box-sizing:border-box;white-space:pre-wrap;overflow-wrap:anywhere}
+/* 实时页的 TUI 弹层（选问题 / 权限确认）：服务端按行原样下发，这里只负责
+   可读字号和「点一下就选中」。以前弹层走正文重排，几个选项会被并成一句话。 */
+.dblk{margin:6px 0;padding:8px 10px;background:#0a0a0a;border:1px solid #2a2a2a;border-radius:8px;font-family:ui-monospace,Menlo,monospace;line-height:1.55;color:#f5f5f5}
+/* .drow 在「会话信息」面板里是「标题 —— 值」的两栏行（14px、每行一条上边框、
+   上下各 8px 内边距）。弹层复用同一个类名，把那些全清掉：40 行的弹层按 14px+8px
+   排出来有一千多像素高，选项被顶到屏幕外——手机上就是「看不到、点不到」。 */
+.dblk .drow{display:block;justify-content:flex-start;gap:0;padding:0;border-top:0;
+  font-size:inherit;white-space:pre-wrap;overflow-wrap:anywhere}
+.dsp{height:.5em}
+.dln{height:1px;background:#191919;margin:6px 0}
+.dopt{padding:6px 8px;margin:2px -8px;border-radius:7px;white-space:pre-wrap;overflow-wrap:anywhere;color:#cccccc}
+.dopt.sel{background:#121b34;color:#b1b9f9;font-weight:600;box-shadow:inset 0 0 0 1px #25335e}
+.dopt:active{background:#1d2547}
+.dtip{margin-top:8px;padding-top:6px;border-top:1px solid #191919;color:#838383;font-size:12px;font-family:-apple-system,BlinkMacSystemFont,"PingFang SC",sans-serif}
+.sp{height:.5em}
+#keys{position:fixed;left:0;right:0;bottom:var(--barh,46px);background:#111111;border-top:1px solid #191919;padding:0 6px 5px;display:flex;flex-direction:column;z-index:4}
+/* 一排 4 键（Tab/↑/↓/⏎）在上沿，下面一条小拉手……反过来：拉手在最上沿。
+   Esc 挪到展开排：中断键误触代价大（正在跑的东西会被打断），别放第一排。
+   往上拉（或点一下）→ 整块上浮：主键排仍在顶，更多键从它下方展开 */
+/* 拉手 = **整条通栏**的可点区域（横着哪儿都能按，回到最早那个手感）：中间那条
+   细线只是「这里能拉」的标记，蓝色的底色画在整条带子上——按下去整条泛蓝。 */
+#kgrab{height:18px;display:flex;align-items:flex-start;justify-content:center;cursor:pointer;
+  padding-top:4px;background:transparent;transition:background .08s}
+#kgrab i{width:46px;height:4px;border-radius:2px;background:#2a2a2a;transition:background .1s}
+#kgrab.on,#kgrab:active{background:rgba(56,139,253,.28)}
+/* **收起状态**：拉手底下那 16px 死区去掉——整条带子贴到输入框上沿。
+   细线**上对齐**（离带子顶边 4px，展开/收起一致），线下面那一整条空带子
+   照样是按得到的地方（按下去整条泛蓝）。展开状态下面本来就是键排、不存在死区。 */
+#keys:not(.kopen){padding-bottom:0}
+/* 默认收起：平时只露一条拉手，点一下/上拉一次就把**全部**快捷键铺开
+   （主键排 + 更多键一起出，只有一层；以前要连点两次才见到 Esc/←/→） */
+/* 展开后三排等距：拉手细线（带子 18px、线在顶边 4px，线下面还剩 10px）
+   → 第一排 → 第二排，每段间隔都是 10px；两排之间不再画横线。 */
+.krow{display:none;grid-template-columns:repeat(4,1fr);gap:4px;margin-top:0}
+#keys.kopen .krow{display:grid}
+#kmore{display:none;grid-template-columns:repeat(4,1fr);gap:4px;margin-top:4px}
+#keys.kopen #kmore{display:grid;animation:kfade .15s ease}
+@keyframes kfade{from{opacity:0}}
+.krow button,#kmore button{background:#1a1b1b;color:#cccccc;border:1px solid #2a2a2a;border-radius:8px;padding:0;height:38px;font-size:13px;white-space:nowrap;font-family:inherit;transition:background .05s,border-color .05s,transform .05s}
+#keys button:active{background:#242424}
+/* 触摸按下的即时反馈：不等到网络往返，手指落上就亮绿（.on 由 touchstart 委托加） */
+#keys button.on{background:#10b981;border-color:#10b981;color:#fff;transform:scale(.93)}
+#bar{position:fixed;left:0;right:0;bottom:0;background:none;border-top:0;padding:10px 10px;padding-bottom:calc(10px + var(--sab,env(safe-area-inset-bottom,0px)));display:flex;gap:8px;align-items:flex-end;z-index:4}
+#bar::before{content:'';position:absolute;left:0;right:0;top:-26px;height:26px;pointer-events:none;z-index:-1;background:linear-gradient(to bottom,rgba(10,10,10,0),rgba(10,10,10,.6) 55%,rgba(10,10,10,.95))}
+/* 快捷键条就贴在输入框正上方，那条分隔线是「拉出快捷键」时最容易误当成拉手的东西，
+   干脆去掉：拉手是个自带外框的小方块，一眼能认出来，不用靠分隔线定位。 */
+body.pg1 #bar{border-top:0}
+/* 会话页底部浮条：这一轮在等你确认/回复时出现（不用去提醒历史翻）。
+   贴在快捷键条上沿、让开右侧的「按住说话」按钮；只在会话页显示。 */
+/* 外观和收件箱「待你决定」卡同一套：深色卡 + 橙色边框 + 红色风险行（2026-11-14） */
+#pendBar{position:fixed;left:8px;right:72px;bottom:calc(var(--dockh,100px) + 8px);
+  z-index:6;display:none;align-items:center;gap:8px;padding:9px 10px 9px 12px;
+  border-radius:12px;background:#111111;border:1px solid rgba(240,164,60,.45);
+  color:#f5f5f5;box-shadow:0 6px 18px rgba(0,0,0,.4)}
+#pendBar.on{display:flex}
+/* 会话页「确认/回复」浮条也下线（2026-11-19 用户：任务完成/等确认时老浮一条在输入框上方，
+   有点烦）。待你决定的事工作台和提醒历史里都在；标记和 pendRender()/pendGo() 都留着，
+   要恢复删掉下面这行即可。 */
+#pendBar{display:none!important}
+#pendTxt{flex:1;min-width:0;font-size:12px;line-height:1.45}
+#pendTxt .pWhat{font-size:14px;color:#f5f5f5;overflow:hidden;display:-webkit-box;
+  -webkit-box-orient:vertical;-webkit-line-clamp:2;word-break:break-word}
+#pendTxt .pRisk{color:#ff6467;margin-top:2px}
+#pendTxt .pMeta{color:#838383;margin-top:2px;white-space:nowrap;overflow:hidden;
+  text-overflow:ellipsis}
+#pendBtn{flex:none;background:#f0a43c;color:#0a0a0a;border:0;border-radius:9px;
+  padding:7px 13px;font-size:13px;font-weight:700;font-family:inherit}
+#pendBtn:active{background:#d9932f}
+/* 字体别用 font 简写：`font:15px/1.4 inherit` 是非法值（inherit 不能进简写），
+   整条会被丢掉，输入框就退回 13px 等宽字体，字一多整块看着跟页面不是一套。
+   分开写，跟着页面字体走。 */
+#txt{flex:1;background:rgba(26,27,27,.9);border:1px solid #242424;color:#f5f5f5;border-radius:22px;padding:10px 14px;font-family:inherit;font-size:16px;line-height:1.4;resize:none;max-height:34vh;min-height:44px}
+#send{background:#346bf1;color:#fff;border:0;border-radius:22px;padding:0 16px;height:44px;font-size:15px;font-weight:700}
+/* 发送键右边是固定宽度的一列：清空叠在发送上方，不挤输入框的宽度 */
+#sendcol{display:flex;flex-direction:column;gap:6px;flex:none}
+/* 输入框长过两倍发送键高度才出现：小框时旁边多一个按钮只会误触 */
+#clr{background:#1a1b1b;color:#cccccc;border:1px solid #242424;border-radius:16px;padding:0 10px;height:32px;font-size:12.5px;font-family:inherit}
+#send:disabled{background:rgba(245,245,245,.12);color:#838383}
+.toast{position:fixed;left:50%;transform:translateX(-50%);bottom:120px;background:#10b981;color:#fff;padding:9px 16px;border-radius:16px;font-size:13px;opacity:0;transition:.25s;pointer-events:none;z-index:70;max-width:calc(100vw - 32px);text-align:center;line-height:1.5}
+.toast.err{background:#b62324}
+.toast.warn{background:#9e6a03}
+.toast.on{opacity:1}
+/* 原样视图：xterm 不支持触摸滚动（触摸全落在 screen 层，viewport 收不到）——
+   screen 让出命中测试，触摸直达 viewport 走浏览器原生惯性滚动；代价是原样页不能划选终端文字 */
+.xterm .xterm-viewport{-webkit-overflow-scrolling:touch;overscroll-behavior:contain;touch-action:pan-y}
+.xterm .xterm-screen{pointer-events:none}
+a,u,ins,.bub,.tool{text-decoration:none!important}
+/* 套餐入口关着时：只收起「开通/升级」的按钮，当前套餐和额度照常显示 */
+body.plans-off #trPlanGo,body.plans-off #trAutoLock,body.plans-off #termLock,body.plans-off #termLock2,body.plans-off #vsSmartLock{display:none!important}
+</style></head><body><div id="dimmer"></div><div id="eyeguard"></div>
+<header>
+  <div class="hrow">
+    <button class="hbtn ic bare brand" onclick="goPage(0,{smooth:1})" title="会话列表" aria-label="会话列表"><img class="plic" src="__BRANDICON__" alt="" width="32" height="32"></button>
+    <div class="ht"><span id="hAg" class="ag" style="display:none"></span><span id="hTitle">__TITLE__</span></div>
+    <!-- 工头（新界面）入口已按 2026-11-25 拍板去除：UI 回经典会话列表；
+         /api/boss/* 端点与 boss.js 保留休眠（事实计算是 Phase 2 资产） -->
+    <span id="hMute" class="hm" style="display:none"></span>
+    <span class="batt" id="batt" style="display:none"><i id="battBar"><b id="battTxt">…</b></i></span>
+  </div>
+  <!-- 页码点：列表 + 每个开着的会话（写 openDots()，会话多了也跟着长） -->
+  <div id="dots"></div>
+  <span id="tierBadge" class="plevel" style="display:none" title="套餐"></span>
+</header>
+<div id="useFloat" onclick="openSettings()" title="今日剩余时长（点开设置）">
+  <div class="uf2" id="ufV">—</div>
+  <div class="uf3" id="ufP" style="display:none">—</div>
+</div>
+<div id="upd" onclick="updTap(event)" title="有新版本可用">↑</div>
+  <button class="fbtn" id="tabbtn" onclick="toggleTabs(event)" title="视图 / 字号">🎨</button>
+  <button id="closeSessBtn" onclick="closeSess()" title="关闭会话" aria-label="关闭会话">✕</button>
+  <div id="tabs">
+    <button class="tab on" id="t_live" onclick="pick('live')">📱 重排</button>
+    <button class="tab" id="t_raw" onclick="pick('raw')">🖥 原样</button>
+    <button class="tab" id="migbtn" style="display:none;background:#3a2b12;color:#ffb900;border-color:#5a3c12" onclick="migrateMe(this)">🔄 转全彩</button>
+    <button class="tab" id="fsm" style="display:none;padding:6px 9px" onclick="fsAdj(-1)" title="实时视图字号减小">A－</button>
+    <button class="tab" id="fsp" style="display:none;padding:6px 9px" onclick="fsAdj(1)" title="实时视图字号增大">A＋</button>
+    <button class="tab" id="tabScan" onclick="scanFromTabs()">⌘ 识别命令</button>
+    <button class="tab" onclick="histFromTabs()">⌨ 命令历史</button>
+    <button class="tab" id="tabQuote" style="display:none" onclick="quoteFromTabs()">⛶ 引用终端</button>
+  </div>
+<div id="msheet" onclick="if(event.target===this)closeModel()">
+  <div class="mbox">
+    <div class="mtitle">切换模型 · <span id="mcur"></span></div>
+    <div id="mprovs"></div>
+    <div class="mtitle">档位</div>
+    <div id="mtiers"></div>
+    <div class="row" style="margin-top:12px;gap:8px">
+      <button class="gray" style="flex:1" onclick="closeModel()">取消</button>
+      <button style="flex:2" id="mgo" onclick="doSwitch()">切换</button>
+    </div>
+  </div>
+</div>
+<!-- 通用确认浮层：删除会话这种「点了就找不回来」的动作必须让它过一道 -->
+<div id="dlg" onclick="if(event.target===this)dlgClose()">
+  <div class="mbox">
+    <div class="mtitle" id="dlgTitle">确认</div>
+    <div id="dlgMsg" style="font-size:14px;line-height:1.65"></div>
+    <div class="row" style="margin-top:14px;gap:8px">
+      <button class="gray" style="flex:1" onclick="dlgCancel()">取消</button>
+      <button id="dlgOk" style="flex:1" onclick="dlgRun()">确定</button>
+    </div>
+  </div>
+</div>
+<div id="psheet" onclick="if(event.target===this)devPairClose()">
+  <div class="mbox">
+    <div class="mtitle">接入开发机 <span class="meta" id="vsQuota"></span></div>
+    <button id="vsScanBtn" style="width:100%;margin-top:10px" onclick="devScan()">📷 扫码接入</button>
+    <div class="meta" style="margin-top:8px;line-height:1.7">电脑上：Mac 点菜单栏图标 · Windows 右键托盘图标（可能在 ^ 里）· Linux 终端输入 codeboss → 选「扫这个码接上」</div>
+    <input id="vsPairCode" placeholder="或粘贴配对码" style="margin-top:10px">
+    <div class="meta" id="vsDevErr" style="margin-top:6px;color:#ff6467"></div>
+    <div class="row" style="margin-top:14px;gap:8px">
+      <button class="gray" style="flex:1" onclick="devPairClose()">取消</button>
+      <button style="flex:2" onclick="vsPair()">绑定</button>
+    </div>
+  </div>
+</div>
+<div id="esheet" onclick="if(event.target===this)devEditClose()">
+  <div class="mbox">
+    <div class="mtitle">编辑开发机</div>
+    <input id="devName" placeholder="名称" maxlength="40" style="margin-top:8px">
+    <div class="meta" id="devEditErr" style="margin-top:6px;color:#ff6467"></div>
+    <div class="row" style="margin-top:14px;gap:8px">
+      <button class="gray" style="flex:1;color:#ff6467" id="devDelBtn" onclick="devDel(this)">删除</button>
+      <button style="flex:2" onclick="devSave()">保存</button>
+    </div>
+  </div>
+</div>
+<div id="pwSheet" onclick="if(event.target===this)accClose(1)">
+  <div class="mbox">
+    <div class="mtitle">修改密码</div>
+    <input id="vsOp" type="password" placeholder="旧密码" style="margin-top:8px">
+    <input id="vsNp" type="password" placeholder="新密码（至少 6 位）">
+    <input id="vsNp2" type="password" placeholder="再输一次新密码">
+    <div class="meta" id="pwErr" style="margin-top:6px;color:#ff6467"></div>
+    <div class="row" style="margin-top:14px;gap:8px"><button class="gray" style="flex:1" onclick="accClose(1)">取消</button><button style="flex:2" onclick="vsPass()">保存</button></div>
+  </div>
+</div>
+<div id="beSheet" onclick="if(event.target===this)accClose(2)">
+  <div class="mbox">
+    <div class="mtitle" id="beTitle">换绑邮箱</div>
+    <div class="row" style="margin-top:8px;gap:8px"><input id="vsBe" type="email" placeholder="新邮箱" style="flex:1"><button class="gray mini" id="vsBcb" onclick="vsSendCode()">发码</button></div>
+    <input id="vsBc" inputmode="numeric" maxlength="6" placeholder="邮箱验证码">
+    <div class="meta" id="beErr" style="margin-top:6px;color:#ff6467"></div>
+    <div class="row" style="margin-top:14px;gap:8px"><button class="gray" style="flex:1" onclick="accClose(2)">取消</button><button style="flex:2" onclick="vsBind()">绑定</button></div>
+  </div>
+</div>
+<!-- 绑定/换绑手机：邮箱注册的账号用它可以补上手机号（短信登录/找回） -->
+<div id="phSheet" onclick="if(event.target===this)accClose(3)">
+  <div class="mbox">
+    <div class="mtitle" id="phTitle">绑定手机</div>
+    <div class="row" style="margin-top:8px;gap:8px"><input id="vsPh" type="tel" inputmode="tel" maxlength="11" placeholder="新手机号" style="flex:1"><button class="gray mini" id="vsPcb" onclick="vsSendSms()">发码</button></div>
+    <input id="vsPc" inputmode="numeric" maxlength="6" placeholder="短信验证码">
+    <div class="meta" id="phErr" style="margin-top:6px;color:#ff6467"></div>
+    <div class="row" style="margin-top:14px;gap:8px"><button class="gray" style="flex:1" onclick="accClose(3)">取消</button><button style="flex:2" onclick="vsBindPhone()">绑定</button></div>
+  </div>
+</div>
+<div id="dsheet" onclick="if(event.target===this)closeDetail()">
+  <div class="mbox">
+    <div class="mtitle">会话详情</div>
+    <div id="dbox"></div>
+    <div class="row" style="margin-top:12px;gap:8px"><button class="gray" style="flex:1" onclick="closeDetail()">关闭</button></div>
+  </div>
+</div>
+<div id="agsheet" onclick="if(event.target===this)closeAgSheet()">
+  <div class="mbox">
+    <div class="mtitle" id="agTitle">新建会话</div>
+    <div id="agBox"></div>
+    <div class="row" style="margin-top:12px;gap:8px"><button class="gray" style="flex:1" onclick="closeAgSheet()">取消</button></div>
+  </div>
+</div>
+<div id="smsheet" onclick="if(event.target===this)closeSModel()">
+  <div class="mbox">
+    <div class="mtitle">本会话模型 · <span id="smTitle"></span></div>
+    <div id="smBox"></div>
+    <div class="row" style="margin-top:12px;gap:8px"><button class="gray" style="flex:1" onclick="closeSModel()">取消</button></div>
+  </div>
+</div>
+<div id="acctsheet" onclick="if(event.target===this)acctClose()">
+  <div class="mbox">
+    <div class="mtitle">已登录的客户端</div>
+    <div id="acctBox2"></div>
+    <div class="row" style="margin-top:12px;gap:8px"><button class="gray" style="flex:1" onclick="acctClose()">关闭</button></div>
+  </div>
+</div>
+<div id="cmdsheet" onclick="if(event.target===this)closeCmdSheet()">
+  <div class="mbox">
+    <div class="mtitle">会话命令 · <span id="cmdSidT"></span> <span class="meta">▶ 在电脑新标签运行</span></div>
+    <div id="cmdBox"></div>
+    <div class="row" style="margin-top:12px;gap:8px"><button class="gray" style="flex:1" onclick="closeCmdSheet()">关闭</button></div>
+  </div>
+</div>
+<div id="deck"><div id="track">
+  <section class="pg ibview" id="pgList"><div class="pgin">
+    <!-- 开发机：一行选台（＋ 接入 / ✎ 改名删除），扁平工具条，和下面的会话卡区分开 -->
+    <div id="devBar" style="display:none">
+      <select id="devSel" class="devsel" onchange="devSwitch(this)"></select>
+      <button class="devbtn" id="devAddBtn" onclick="devPairOpen()" title="接入开发机">＋</button>
+      <button class="devbtn" id="devEditOpenBtn" onclick="devEditOpen()" title="改名 / 删除">✎</button>
+      <button class="devbtn" onclick="nhOpen()" title="提醒历史">🕘</button>
+      <button class="devbtn" onclick="openSettings()" title="设置">⚙</button>
+    </div>
+    <!-- 列表页两个子页（页签，不是内容卡）：收件箱是核心，默认就停在这一页 -->
+    <div id="listTabs">
+      <button class="lt on" id="ltIb" onclick="listView('ib',1)"><span id="ltIbL">收件箱</span><span class="n" id="ltIbN" style="display:none"></span></button>
+      <button class="lt" id="ltSess" onclick="listView('sess',1)">会话</button>
+    </div>
+    <div id="ibPane"><div class="nhEmpty">加载中…</div></div>
+    <div class="card" id="bindCard" style="display:none;cursor:pointer" onclick="devPairOpen()">
+      <div class="name">绑定开发机</div>
+      <div class="meta">扫码接入一台电脑</div>
+    </div>
+    <!-- agent 切换（Claude / Codex / 以后加的 hermes、openclaw…）：装了两种以上才出现。
+         它在「当前模型」上面——列表看谁、模型切谁、目录＋默认开谁，都以这里为准。 -->
+    <div id="agBar"><div id="agTabs" style="display:flex;gap:6px;width:100%"></div></div>
+    <div class="card" id="modelCard" onclick="openModel()" style="cursor:pointer;padding:10px 15px">
+      <div class="row" style="gap:10px">
+        <span class="name" id="modelLbl" style="font-size:13px;color:#838383;flex:none">当前模型</span>
+        <span class="meta" id="modelVal" style="flex:1;min-width:0;text-align:right;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;color:#f5f5f5">—</span>
+        <span class="meta" style="flex:none">切换 ›</span>
+      </div>
+    </div>
+    <!-- 当前这种 agent 一个会话都没有时的入口：直接开在电脑登录用户的 home 目录 -->
+    <div class="card" id="newSessCard" style="display:none;cursor:pointer" onclick="sessNew(null,'')">
+      <div class="row" style="gap:10px">
+        <span class="name" style="font-size:13px;color:#838383;flex:none">新建会话</span>
+        <span class="meta" style="flex:1;min-width:0;text-align:right;color:#f5f5f5">电脑 home 目录</span>
+        <span class="meta" style="flex:none">＋</span>
+      </div>
+    </div>
+    <!-- 会话列表（决定/结果都在收件箱页签里，这里保持纯列表） -->
+    <div id="list"><div class="card"><div class="meta">加载中…</div></div></div>
+    <div class="card" id="newTermCard">
+      <div class="name">新建终端<span id="termLock" class="meta" style="display:none;color:#ffb900;margin-left:6px" onclick="vsPay()">免费版不具备此功能 · 开通 Pro 解锁 ›</span></div>
+      <div>
+        <label>工作目录</label>
+        <input name="cwd" id="n_cwd" list="dirs" value="" required>
+        <datalist id="dirs"></datalist>
+        <label>命令</label>
+        <input name="cmd" id="n_cmd" value="claude">
+        <div style="margin-top:12px;display:flex;gap:8px;flex-wrap:wrap">
+          <button type="button" id="termCreateBtn" onclick="termCreate(this)">创建 PTY</button>
+          <button type="button" id="termMacBtn" style="background:#1a1b1b;color:#cccccc;border:1px solid #2a2a2a" onclick="macTermOpen(this)">🖥 打开电脑终端</button>
+        </div>
+      </div>
+    </div>
+    <!-- 终端入口：终端列表不再是一屏左滑页，改成列表页底部点进去（全屏子页，带返回） -->
+    <div class="card" id="termEntryCard" style="cursor:pointer;padding:10px 15px" onclick="openTermPage()">
+      <div class="row" style="gap:10px">
+        <span class="name" style="font-size:13px;color:#838383;flex:none">终端</span>
+        <span class="meta" id="termEntryN" style="flex:1;min-width:0;text-align:right;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;color:#f5f5f5">—</span>
+        <span class="meta" style="flex:none">›</span>
+      </div>
+    </div>
+  </div></section>
+  <section class="pg" id="pgCtrl">
+   <div id="pgMove">
+    <div id="feed"></div>
+    <pre id="live">加载中…</pre>
+    <div id="livehist"></div>
+    <div id="liveflow"></div>
+    <div id="live2" style="display:none;padding:4px;background:#0a0a0a"></div>
+   </div>
+  </section>
+</div></div>
+<!-- 终端列表：全屏子页（列表页「终端」入口进），不再参与左滑翻页 -->
+<div id="termPage" class="subpage">
+  <div class="subhd"><button class="gray mini" onclick="closeTermPage()">← 返回</button><span class="ttl">终端</span><span class="subw"></span></div>
+  <section class="pg" id="pgCmd"><div class="pgin">
+    <div class="prow" style="padding:10px 2px 8px;align-items:center">
+      <span style="font-weight:600;font-size:13.5px;flex:none">终端</span>
+      <span id="termHint" style="flex:1;color:#787878;font-size:12px;text-align:left"></span>
+      <span id="termLock2" style="flex:none;color:#ffb900;font-size:12px;display:none" onclick="vsPay()">免费版不可用 ›</span>
+      <button class="gray mini" id="termNewBtn" style="flex:none" onclick="termNew()">＋ 新开</button>
+    </div>
+    <div id="termList"></div>
+  </div></section>
+</div>
+<!-- 设置：全屏子页（列表页齿轮进），不再参与左滑翻页 -->
+<div id="setPage" class="subpage">
+  <div class="subhd"><button class="gray mini" onclick="closeSettings()">← 返回</button><span class="ttl">设置</span><span class="subw"></span></div>
+  <section class="pg" id="pgVoice"><div class="pgin">
+
+    <!-- T3 式分组（窗口核心 Phase 1）：五组可折叠，组头=小字标签—填充横线—chevron，
+         折叠记忆在 localStorage cb_setgrp（默认全展开）。只动信息组织，不动任何设置项。 -->
+    <div class="grp t3g" id="grpConn" onclick="grpToggle('Conn')"><span class="gl">连接</span><i class="gl-line"></i><span class="gchev">›</span></div>
+    <div id="boxConn">
+    <div class="card" id="vsNetCard" style="display:none">
+      <div class="tr"><span class="tl">网络</span><span class="tv" id="vsNet">…</span><button class="gray mini" id="vsNetFix" style="display:none;margin-left:8px" onclick="vsNetFixPerm()">读取名称</button></div>
+      <div class="tr"><span class="tl">直连</span><span class="tv" id="vsDirect">…</span><button class="gray mini" onclick="directRetry()">重测</button></div>
+      <div class="tr"><span class="tl">推送</span><span class="tv" id="vsPush">…</span><button class="gray mini" onclick="pushRetry()">重连</button></div>
+      <div class="tr"><span class="tl"></span><span class="sg grow">
+        <button class="gray" onclick="netOpen('wifi')">📶 WiFi</button><button class="gray" onclick="netOpen('data')">📱 移动数据</button>
+      </span></div>
+    </div>
+    <!-- 刷新页面：连接层的自修复（页面异常/改版没生效） -->
+    <div class="card"><div class="tr"><span class="tl">页面异常/改版没生效？</span><span class="sg"><button class="gray" onclick="vsRefresh()">刷新页面</button></span></div></div>
+    </div>
+
+    <div class="grp t3g" id="grpRem" onclick="grpToggle('Rem')"><span class="gl">提醒与语音</span><i class="gl-line"></i><span class="gchev">›</span></div>
+    <div id="boxRem">
+    <div class="card">
+      <div class="tr"><span class="tl">说话方式</span><span class="sg">
+        <button class="gray" id="vsHold" onclick="vsSet('mode','hold')">按住</button><button class="gray" id="vsTog" onclick="vsSet('mode','toggle')">点按</button>
+      </span></div>
+      <div class="tr"><span class="tl">识别后</span><span class="sg">
+        <button class="gray" id="vsAutoOn" onclick="vsSet('autosend',true)">自动发送</button><button class="gray" id="vsAutoOff" onclick="vsSet('autosend',false)">只填框</button>
+      </span></div>
+      <!-- 自动等你说话：属于语音识别，按智能提醒的套餐位判定（Pro / Max） -->
+      <div class="tr tsw" id="trNAuto" style="display:none" onclick="autoToggle()"><span class="tl">自动等你说话</span><i class="sw" id="swNAuto"></i></div>
+      <div class="tr" id="trNAutoHint" style="display:none"><span class="meta" style="font-size:11px;line-height:1.6;color:#838383;flex:1;min-width:0;white-space:normal">AI 干完活或要你确认时，这里自动开麦听你说：说完自动识别填进输入框，再听你说一句「发送」才真的发，「取消」就不发。20 秒没开口、确认 10 秒没说话自动关闭。只在亮屏、正开着这个会话时生效。</span></div>
+      <!-- 自动听写是增值服务：免费版看得见、点不动，点这里去套餐页 -->
+      <div class="tr" id="trAutoLock" style="display:none"><span class="meta" style="font-size:11px;line-height:1.6;color:#ffb900;flex:1;min-width:0;white-space:normal" onclick="vsPay()">自动听写是 Pro / Max 套餐的增值功能 · 开通解锁 ›</span></div>
+    </div>
+
+    <!-- 基础提醒＝送达方式（文字/提醒音/息屏/免打扰/静音），不调模型，免费可用 -->
+    <!-- 实时推送没有开关了：能推就推（推着的时候轮询全停），推不了自动回轮询，
+         用户不需要（也没法）判断该开哪个。cb_cfg.stream 这个键仍然认——
+         真遇到某台机器长连接被 ROM 反复掐，控制台里 pushSet(false) 可强制轮询。 -->
+    <div class="card">
+      <div class="tr tsw" onclick="nToggle('bgn')"><span class="tl">息屏提醒</span><i class="sw" id="swNBg"></i></div>
+      <div class="tr"><span class="meta" style="font-size:11px;line-height:1.5;color:#838383">App 在后台/黑屏也能收到系统通知和提醒音（这条后台通道不计使用时长）。关掉后只有亮屏在前台时才提醒。</span></div>
+      <div class="tr tsw" onclick="nToggle('ntext')"><span class="tl">文字提醒</span><i class="sw" id="swNText"></i></div>
+      <div class="tr tsw" onclick="nToggle('nsound')"><span class="tl">提醒音</span><i class="sw" id="swNSound"></i></div>
+      <!-- 免打扰时段：时段内照挂角标、通知走静音渠道，不响提示音、不念语音。
+           起止时间存手机配置（cb_cfg），壳的后台服务读同一份 cfg_raw，黑屏时也守同一套规则。 -->
+      <div class="tr tsw" onclick="dndToggle()"><span class="tl">免打扰时段</span><i class="sw" id="swDnd"></i></div>
+      <div class="tr" id="trDnd" style="display:none;gap:8px;align-items:center">
+        <span class="tl" style="flex:none;width:auto">从</span>
+        <label class="tbtn"><b id="dndFTxt">22:00</b><input id="dndF" type="time" value="22:00" onchange="dndSet('f',this.value)"></label>
+        <span class="tl" style="flex:none;width:auto">到</span>
+        <label class="tbtn"><b id="dndTTxt">08:00</b><input id="dndT" type="time" value="08:00" onchange="dndSet('t',this.value)"></label>
+      </div>
+      <div class="tr" id="trDndHint" style="display:none"><span class="meta" style="font-size:11px;line-height:1.5;color:#838383">这段时间里照常显示角标和通知，但不响提醒音、不念语音（跨午夜也行）。</span></div>
+      <!-- 静音：手动快捷开关，和免打扰同一套降级（只降声音，不挡通知）。
+           主要入口是长按音量下键 0.8 秒；放在这里是为了随时能看到并关掉。 -->
+      <div class="tr tsw" onclick="muteToggle()"><span class="tl">静音（长按音量下键切换）</span><i class="sw" id="swMute"></i></div>
+      <div class="tr"><span class="meta" style="font-size:11px;line-height:1.5;color:#838383">静音时提醒音和语音播报都不出声，角标和系统通知照常；再长按一次音量下键（或点上面这行）恢复。</span></div>
+      <div id="vsVolAlertBox">
+        <div class="tr"><span class="tl">提醒音音量</span><input type="range" id="vsVolAlert" min="0" max="100" value="60" oninput="vsVolSetA(this.value)" onchange="vsVolApplyRing()"><button class="gray mini" onclick="notifyTest('snd')" title="试听提醒音">🔊</button></div>
+        <div class="tr"><span class="meta" style="font-size:11px;line-height:1.5;color:#838383">前台和锁屏时的提醒都按这个音量（0~100 的 App 内音量，不动系统音量）。</span></div>
+      </div>
+      <div class="tr"><span class="tv" id="nCap" style="font-size:12px;color:#838383;flex:1;min-width:0;white-space:normal;line-height:1.6">…</span></div>
+    </div>
+
+    <!-- 智能提醒＝在基础提醒之上加模型能力（总结/状态识别/语音播报），Pro / Max 专属 -->
+    <!-- 免费版看得见、点不动，点这条去套餐页 -->
+    <div class="card" id="vsSmartLock" style="display:none">
+      <div class="tr"><span class="meta" style="font-size:11px;line-height:1.6;color:#ffb900;flex:1;min-width:0;white-space:normal" onclick="vsPay()">智能提醒（模型概括 + 状态识别 + 语音播报）是 Pro / Max 套餐的增值功能 · 开通解锁 ›</span></div>
+    </div>
+    <div id="boxSmart">
+    <div class="card">
+      <div class="tr tsw" onclick="nPrefToggle('smart')"><span class="tl">智能提醒</span><i class="sw" id="swNSmart"></i></div>
+      <div class="tr"><span class="meta" style="font-size:11px;line-height:1.5;color:#838383">只影响这台手机。关掉后这台手机只收基础提醒（文字/提醒音），不念语音、不显示智能内容；开发机只要还有别的手机开着，仍会照常生成。</span></div>
+      <div class="tr"><span class="meta" style="font-size:11px;line-height:1.5;color:#838383">省钱：手机没连、页面也没开的时候不调模型、不合成语音（生成了也没人听）；这期间的提醒回到手机后仍是基础文字提醒。本机「语音播报」关掉后，跟语音有关的模型判断/概括也一起省掉（别的手机还要听才生成）。</span></div>
+    </div>
+    <div class="card" id="boxSmartSub">
+      <div class="tr tsw" id="trNVoice" onclick="nToggle('nvoice')"><span class="tl">语音播报（重要提醒）</span><i class="sw" id="swNVoice"></i></div>
+      <div class="tr tsw" id="trNAbout" onclick="nPrefToggle('on')"><span class="tl">语音里说明在做什么</span><i class="sw" id="swNAbout"></i></div>
+      <div class="tr tsw" id="trNAboutLlm" onclick="nPrefToggle('llm')"><span class="tl" style="padding-left:13px;color:#838383">└ 用智能概括</span><i class="sw" id="swNAboutLlm"></i></div>
+      <div class="tr"><span class="meta" style="font-size:11px;line-height:1.5;color:#838383">语音先念半句这轮在做什么（如「语音键卡住，完成了」）。智能概括：把你这轮说的话压成一句，用小模型（约 1 秒）；关掉就直接截你原话的开头。总开关关掉只念状态。</span></div>
+      <div class="tr tsw" id="trNReply" onclick="nPrefToggle('reply')"><span class="tl">语音里概括 AI 的回复</span><i class="sw" id="swNReply"></i></div>
+      <div class="tr"><span class="meta" style="font-size:11px;line-height:1.5;color:#838383">播报前先把 AI 这轮回复压成一句话：发生了什么、需要你确认什么（如「改完了三处，需要你确认是否发布」）。用小模型概括，提醒大约晚 1–2 秒；关掉就只念「在做什么 + 完成了」。</span></div>
+      <div class="tr tsw" id="trNNa" onclick="nPrefToggle('na')"><span class="tl">智能判断是否在等你</span><i class="sw" id="swNNa"></i></div>
+      <div class="tr"><span class="meta" style="font-size:11px;line-height:1.5;color:#838383">AI 说「做完了」但其实在等你确认/动手时（要不要发布、确认后我就推送），改报「需要确认」。用小模型判断；关掉只按规则判断。语音播报关掉时这项跟着停（判断了也没人听，不花模型钱）。</span></div>
+      <div class="tr" id="trSayStyle"><span class="tl">播报风格</span><span class="sg" id="sayStyleBtns" style="flex-wrap:wrap;justify-content:flex-end"></span></div>
+      <div class="tr" id="trSayHint"><span class="meta" id="sayStyleHint" style="font-size:11px;line-height:1.5;color:#838383;flex:1;min-height:0"></span></div>
+      <div class="tr"><span class="meta" style="font-size:11px;line-height:1.5;color:#838383">点风格立即试听：说法和嗓音一起换（开发机合成，手机没装朗读引擎也能听）。</span></div>
+      <div id="vsVolSpeechBox">
+        <div class="tr"><span class="tl">语音播报音量</span><input type="range" id="vsVolSpeech" min="0" max="100" value="90" oninput="vsVolSetP(this.value)" onchange="vsVolApplyMedia()"><button class="gray mini" onclick="notifyTest('voice')" title="试听语音">🔊</button></div>
+        <div class="tr"><span class="meta" style="font-size:11px;line-height:1.5;color:#838383">实际音量 = 手机的媒体音量 × 这里的设置。听着小，先用侧键把媒体音量调大。</span></div>
+      </div>
+    </div>
+    </div>
+    </div>
+
+    <div class="grp t3g" id="grpLook" onclick="grpToggle('Look')"><span class="gl">外观</span><i class="gl-line"></i><span class="gchev">›</span></div>
+    <div id="boxLook">
+    <div class="card" id="vsRunCard" style="display:none">
+      <div class="tr"><span class="tl">运行模式</span><span class="sg">
+        <button class="gray" id="vsModeApp" onclick="cbRunMode(this,'app')">App</button><button class="gray" id="vsModeKiosk" onclick="cbRunMode(this,'kiosk')">桌面接管</button>
+      </span></div>
+    </div>
+    <div class="card" id="vsDispCard" style="display:none">
+      <div class="tr"><span class="tl">亮度</span><input type="range" id="vsBright" min="1" max="100" value="100" oninput="vsBrightSet(this.value)"><button class="gray mini" id="vsBrightAuto" onclick="vsBrightAuto()">自动</button></div>
+      <div class="tr"><span class="tl" onclick="codingToggle()" style="flex:1;cursor:pointer">编码模式</span><i class="sw" id="codingSw" style="margin-left:0" onclick="codingToggle()"></i></div>
+      <div class="tr"><span class="meta" style="color:#838383;font-size:11px;line-height:1.5">网页预览、产出物编辑这些写代码用的入口。工头线默认关，写代码的机器建议开。</span></div>
+      <div id="vsAutoHint" onclick="autoBrightFix()" style="display:none;font-size:11px;color:#838383;line-height:1.5;margin:-2px 0 6px;cursor:pointer"></div>
+      <div class="tr">
+        <span class="tl" onclick="vsKeep()" style="flex:1;cursor:pointer">屏幕常亮</span><i class="sw" id="vsKeepOn" style="margin-left:0" onclick="vsKeep()"></i>
+        <span class="tl" onclick="vsEye()" style="flex:1;cursor:pointer;text-align:right;margin-left:16px">护眼模式</span><i class="sw" id="vsEyeBtn" style="margin-left:0" onclick="vsEye()"></i>
+      </div>
+      <div class="tr" id="vsKeepHint" style="display:none">
+        <span class="meta" style="color:#838383;font-size:11px;line-height:1.5">常亮只让屏幕不熄灭，不额外消耗使用时长：挂着不动不计时，只有真正在操作（碰屏幕、发消息、按键）才计。</span>
+      </div>
+    </div>
+    </div>
+
+    <div class="grp t3g" id="grpAcct" onclick="grpToggle('Acct')"><span class="gl">账号</span><i class="gl-line"></i><span class="gchev">›</span></div>
+    <div id="boxAcct">
+    <!-- 套餐跟账号一组：会员档位/额度/开通（01_core 的 hid('boxPlan') 按能力开关这张卡） -->
+    <div id="boxPlan">
+    <div class="card">
+      <div class="tr"><span class="tl">套餐</span><span class="tv" id="vsPlan">…</span></div>
+      <div class="tr"><span class="tl" id="vsPlanUse" style="font-size:12px;color:#838383;flex:1;min-width:0;white-space:normal;line-height:1.7"></span></div>
+      <div class="tr" id="trPlanGo"><button class="gray" id="vsPlanGo" style="flex:1" onclick="vsPay()">开通套餐</button></div>
+    </div>
+    </div>
+    <div class="card" id="vsAccCard" style="display:none">
+      <div class="tr"><span class="tl">用户名</span><span class="tv" id="vsAcctName">…</span></div>
+      <!-- 手机/邮箱没绑定时右边直接给「绑定」按钮；绑了就变「换绑」（2026-11-09 用户要求） -->
+      <div class="tr"><span class="tl">手机</span><span class="tv" id="vsAcctPhone">…</span><span class="sg" id="vsAcctPhoneBtn"></span></div>
+      <div class="tr"><span class="tl">邮箱</span><span class="tv" id="vsAcctEmail">…</span><span class="sg" id="vsAcctEmailBtn"></span></div>
+      <div class="tr go" onclick="acctOpen()"><span class="tl">已登录的客户端</span><span class="chev">›</span></div>
+      <div class="tr go" onclick="accOpen(1)"><span class="tl">修改密码</span><span class="chev">›</span></div>
+    </div>
+    <!-- 退出登录放账号组最下面：这是「离开」的动作，不该夹在改密码、反馈中间被误触 -->
+    <div class="card" id="vsOutCard" style="display:none;margin-top:28px">
+      <div class="tr" style="border-top:0"><button class="gray" style="flex:1;color:#ff6467" onclick="vsLogout(this)">退出登录</button></div>
+    </div>
+    </div>
+
+    <div class="grp t3g" id="grpAbout" onclick="grpToggle('About')"><span class="gl">关于</span><i class="gl-line"></i><span class="gchev">›</span></div>
+    <div id="boxAbout">
+    <div class="card">
+      <div class="tr go" onclick="fbOpen()"><span class="tl">问题建议</span><span class="chev">›</span></div>
+      <div class="tr go" onclick="legalOpen('privacy')"><span class="tl">隐私政策</span><span class="chev">›</span></div>
+      <div class="tr go" onclick="legalOpen('terms')"><span class="tl">服务条款</span><span class="chev">›</span></div>
+      <div class="tr"><span class="meta" style="font-size:11.5px;line-height:1.6;color:#838383">有问题或建议？在工单里提，我们回复后可以接着聊。</span></div>
+    </div>
+
+    <!-- 版本更新：日常不怎么点，收在关于组 -->
+    <div class="card">
+      <div class="tr" id="vsVerRow" style="display:none"><span class="tl">客户端</span><span class="tv" id="vsVer">…</span></div>
+      <div class="tr" id="vsTfRow" style="display:none"><span class="tl">iOS 公开内测</span><button class="gray" onclick="vsOpenTf()">打开 TestFlight</button></div>
+      <div class="tr" id="vsUpdBtns"><button class="gray" id="vsUpdBtn" style="flex:1" onclick="vsCheckUpd(1)">检查客户端更新</button><button id="vsUpdGo" style="flex:1;margin-left:8px;display:none" onclick="vsUpdateApp()">更新 App</button></div>
+    </div>
+    <!-- 开发机服务（host）跟客户端更新挨着：两个「检查更新」原来在页面底部一张卡里，
+         分组重排后一个跑到连接组、一个留在关于组，找起来要多划一趟（用户反馈）。
+         挪回来后按钮也改名，别再两个同名。 -->
+    <div class="card">
+      <div class="tr"><span class="tl">开发机服务</span><span class="tv" id="hsVer">未检查</span></div>
+      <div class="tr"><button class="gray" id="hsBtn" style="flex:1" onclick="hsCheck(1)">检查服务更新</button><button id="hsGo" style="flex:1;margin-left:8px;display:none" onclick="hsUpdate()">更新服务</button></div>
+    </div>
+    </div>
+
+  </div></section>
+</div>
+<!-- 终端全屏浮层必须放 body 层：#track 有 transform，会成为 fixed 的包含块，导致浮层跑到屏幕外 -->
+<div id="termViewBox" style="display:none">
+  <div id="termGrab" title="上下拖动调整终端高度"><i></i></div>
+  <div class="tr" style="padding:6px 12px;border-bottom:1px solid #191919">
+    <button class="gray mini" style="flex:none" onclick="termBack()">← 列表</button>
+    <span class="sg grow" id="termTitle" style="text-align:center;overflow:hidden;text-overflow:ellipsis;white-space:nowrap"></span>
+    <button class="gray mini" style="flex:none" onclick="termFocus()" title="聚焦终端，弹出键盘">⌨</button>
+    <button class="gray mini" style="flex:none" onclick="termExit()">✕ 关闭</button>
+  </div>
+  <iframe id="termFrame"></iframe>
+</div>
+<!-- 问题建议：工单页（设置里点「问题建议」进来）。必须放 body 层：#track 有 transform，
+     放在里面 fixed 会被困住、浮到屏幕外。 -->
+<div id="fbPage">
+  <div id="fbHd">
+    <button class="gray" style="flex:none;padding:6px 11px;font-size:13px" onclick="fbBack()">← 返回</button>
+    <span class="ttl" id="fbTitle">问题建议</span>
+    <button class="gray" style="flex:none;padding:6px 11px;font-size:13px" onclick="fbNew()">＋ 新反馈</button>
+  </div>
+  <div id="fbBody">
+    <div id="fbCompose" style="display:none">
+      <div class="card fbform">
+        <div class="tr"><span class="tl">类型</span><span class="sg">
+          <button class="gray" id="fbKindBug" onclick="fbKind('问题')">问题</button><button class="gray" id="fbKindIdea" onclick="fbKind('建议')">建议</button>
+        </span></div>
+        <textarea id="fbText" maxlength="800" placeholder="遇到了什么问题？或者希望增加什么功能？说清楚一点，我们好复现。"></textarea>
+        <div class="tr" style="gap:8px">
+          <button class="gray" id="fbMic" style="flex:1">🎤 按住说</button>
+          <button class="gray" style="flex:1" onclick="fbPick()">＋ 截图/视频</button>
+        </div>
+        <input type="file" id="fbFile" accept="image/*,video/*" multiple style="position:absolute;left:-9999px;top:0;width:1px;height:1px;opacity:0" onchange="fbFiles(this)">
+        <div id="fbPrev" style="display:flex;flex-wrap:wrap;gap:6px;margin-top:8px"></div>
+        <div class="tr"><span class="meta" id="fbHint" style="font-size:11px;line-height:1.5;color:#838383">可附截图或视频：最多 4 个，单个 12MB、合计 30MB。</span></div>
+        <div class="tr"><button class="gray" id="fbSend" style="flex:1" onclick="fbSubmit()">提交反馈</button></div>
+      </div>
+    </div>
+    <div id="fbList"></div>
+    <div id="fbDetail" style="display:none"></div>
+  </div>
+</div>
+<!-- 提醒历史：智能识别出的进度/概括，按天 + 会话自动分组的时间线。body 层（#track 有 transform） -->
+<div id="nhPage">
+  <div id="nhHd">
+    <button class="gray" style="flex:none;padding:6px 11px;font-size:13px" onclick="nhClose()">← 返回</button>
+    <span class="ttl" id="nhTitle">提醒历史</span>
+    <button class="gray" style="flex:none;padding:6px 11px;font-size:13px" onclick="nhLoad()" title="刷新">↻</button>
+  </div>
+  <div id="nhChips">
+    <button class="on" id="nhCAll" onclick="nhFilter('all')">全部</button>
+    <button id="nhCSum" onclick="nhFilter('sum')">只看有概括的</button>
+  </div>
+  <div id="nhBody"><div class="nhEmpty">加载中…</div></div>
+</div>
+<div id="keys">
+  <div id="kgrab" onclick="kGrabClick()" title="点一下或往上拉展开快捷键"><i></i></div>
+  <!-- 默认收起（只露拉手）：点一下/上拉一次把主键排和更多键一起铺开，再点/下滑收起 -->
+  <div class="krow">
+    <button data-k="tab" onclick="key('tab')" title="补全/展开选项（不抢焦点）">Tab</button>
+    <button data-k="up" onclick="key('up')" title="上方向键（⚠ 会把电脑焦点切到该终端窗口）">↑</button>
+    <button data-k="down" onclick="key('down')" title="下方向键（⚠ 会把电脑焦点切到该终端窗口）">↓</button>
+    <button data-k="enter" onclick="key('enter')" title="确认/提交（选中选项后按这个）">⏎</button>
+  </div>
+  <div id="kmore">
+    <button data-k="esc" onclick="key('esc')" title="中断当前操作（不抢电脑焦点）">Esc</button>
+    <button data-k="left" onclick="key('left')" title="左方向键（⚠ 会把电脑焦点切到该终端窗口）">←</button>
+    <button data-k="right" onclick="key('right')" title="右方向键（⚠ 会把电脑焦点切到该终端窗口）">→</button>
+    <button data-k="shift_tab" onclick="key('shift_tab')" title="切换权限模式（不抢焦点）">⇧Tab</button>
+    <button data-k="space" onclick="key('space')" title="空格（滚动/选中文本，不抢焦点）">空格</button>
+    <button data-k="backspace" onclick="key('backspace')" title="退格：删掉上一个字（不抢焦点）">⌫</button>
+    <button data-k="ctrl_o" onclick="key('ctrl_o')" title="展开/收起详细输出（不抢焦点）">⌃O</button>
+    <button data-k="slash_model" onclick="key('slash_model')" title="清空输入行并发送 /model（切换模型）">/model</button>
+    <!-- 文件/图片不常按，放面板最下面（2026-11-19 用户：别占第一排） -->
+    <button onclick="filesOpen()" title="会话产物文件">📁 文件</button>
+    <button onclick="document.getElementById('pfile').click()" title="拍照/选图派活">📷 图片</button>
+    <button id="tcBtn" onclick="testOpen()" title="测试红绿卡：会话里跑过的验证命令">🧪 测试</button>
+    <button onclick="previewOpen()" title="网页预览：看这台电脑上开着的网页服务（真页面，能点）">👁 预览</button>
+    <button id="kApkBtn" onclick="apkOpen()" title="装到手机：会话项目里构建出的 APK 直接下载安装">📲 装 App</button>
+    <button onclick="shotOpen()" title="拍一张这台电脑的屏幕（按需拍）">📸 拍屏</button>
+    <button onclick="routerOpen()" title="模型路由：各 agent 用什么模型、额度余量，点击切换">🔀 路由</button>
+    <button id="dpBtn" onclick="deployOpen()" title="交付：发布 → 看线上健康 → 不对就回滚">🚀 发布</button>
+    <!-- 下面这排先隐藏（暂时用不上；要恢复取消注释即可，服务端按键支持保留着）
+    <button data-k="ctrl_l" onclick="key('ctrl_l')" title="清屏（不抢焦点）">⌃L</button>
+    <button data-k="ctrl_a" onclick="key('ctrl_a')" title="光标跳到行首（不抢焦点）">⌃A</button>
+    <button data-k="ctrl_e" onclick="key('ctrl_e')" title="光标跳到行尾（不抢焦点）">⌃E</button>
+    <button data-k="ctrl_k" onclick="key('ctrl_k')" title="删到行尾（不抢焦点）">⌃K</button>
+    <button data-k="ctrl_w" onclick="key('ctrl_w')" title="删前一个词（不抢焦点）">⌃W</button>
+    <button data-k="ctrl_r" onclick="key('ctrl_r')" title="搜历史输入（不抢焦点）">⌃R</button>
+    -->
+  </div>
+</div>
+<span id="lhprobe" style="position:absolute;visibility:hidden;white-space:pre;font-family:ui-monospace,Menlo,monospace;line-height:normal">X</span>
+<div id="pendBar"><div id="pendTxt"></div><button id="pendBtn" onclick="pendGo()">确认</button></div>
+<div id="docBar">
+  <span class="dic" id="docBarIc">📝</span>
+  <div class="dtext" onclick="docFloatOpen()">
+    <div class="dname" id="docBarName"></div>
+    <div class="dmeta" id="docBarMeta">这轮写好的文档 · 点开直接看</div>
+  </div>
+  <button class="dopen" onclick="docFloatOpen()">查看</button>
+  <button class="dclose" onclick="docFloatClose()">×</button>
+</div>
+<div id="bar">
+  <input type="file" id="pfile" accept="image/*" style="display:none" onchange="photoPick(this)">
+  <textarea id="txt" rows="1" placeholder="说点什么…"></textarea>
+  <div id="sendcol">
+    <button id="clr" onclick="clearTxt(this)" style="display:none">清空</button>
+    <button id="send" onclick="sendMsg()">发送</button>
+  </div>
+</div>
+<div class="toast" id="toast"></div>
+<!-- 产物文件子页（批次一）：会话 cwd 内的文件，列表 + 内联预览 + 系统打开 -->
+<div id="filePage" class="subpage">
+  <div class="subhd"><button class="gray mini" onclick="filesClose()">← 返回</button><span class="ttl">文件</span><span class="subw"></span></div>
+  <div class="pgin">
+    <div class="seg"><button id="fsegArts" class="on" onclick="filesSeg('arts')">产出物</button><button id="fsegAll" onclick="filesSeg('all')">全部文件</button></div>
+    <div id="fcrumb" class="meta" style="padding:6px 14px"></div><div id="fileList"></div>
+  </div>
+</div>
+<!-- 测试红绿卡（A1）：会话里跑过的验证命令，最近 5 次红绿 + 一键重跑 -->
+<div id="testPage" class="subpage">
+  <div class="subhd"><button class="gray mini" onclick="testClose()">← 返回</button><span class="ttl">测试</span><span class="subw"></span></div>
+  <div class="pgin">
+    <div style="display:flex;gap:8px;margin-bottom:10px">
+      <button id="cmdB_test" style="flex:1" onclick="cmdRun('test')">▶ 测试</button>
+      <button id="cmdB_lint" style="flex:1" onclick="cmdRun('lint')">✔ 检查</button>
+      <button id="cmdB_build" style="flex:1" onclick="cmdRun('build')">📦 构建</button>
+    </div>
+    <div id="cmdNone" class="meta" style="display:none;margin-bottom:8px">这个项目没配可跑的命令（package.json scripts 的 test/lint/build，或 pyproject / Makefile 的 test、lint、build 目标）</div>
+    <div id="testList"></div>
+  </div>
+</div>
+<!-- 交付（A4）：发布 / 回滚 / 健康卡，只在 codeboss 线出现 -->
+<div id="depPage" class="subpage">
+  <div class="subhd"><button class="gray mini" onclick="deployClose()">← 返回</button><span class="ttl">交付</span><span class="subw"></span></div>
+  <div class="pgin">
+    <div style="display:flex;gap:8px;margin-bottom:10px">
+      <button style="flex:1" onclick="deployRun()">🚀 发布</button>
+      <button class="gray" style="flex:1" onclick="deployRollback()">↩ 回滚</button>
+      <button class="gray" style="flex:none" onclick="deployLoad(true)">刷新</button>
+    </div>
+    <div id="depHealth"></div>
+    <div id="depList"></div>
+  </div>
+</div>
+<div id="fview" onclick="if(event.target===this)fviewClose()">
+  <div class="mbox">
+    <div class="mtitle" id="fvTitle"></div>
+    <div id="fvBody" style="margin-top:10px"></div>
+    <div id="fvReview">
+      <button onclick="fvReviewOk()">✅ 确认</button>
+      <button class="gray" onclick="fvReviewAdvice()">💬 提建议</button>
+    </div>
+    <button id="fvCrop" style="display:none;width:100%;margin-top:12px" onclick="fvCropOpen()">✂️ 圈选发指令</button>
+    <button id="fvOpen" style="display:none;width:100%;margin-top:12px" onclick="fviewSysOpen()">用其他应用打开</button>
+    <button class="gray" style="width:100%;margin-top:8px" onclick="fviewClose()">关闭</button>
+  </div>
+</div>
+<!-- 圈选层（批次三）：拖一个框，裁下来发指令 -->
+<div id="cropPage">
+  <div class="crophd">
+    <button class="gray mini" onclick="cropClose()">← 取消</button>
+    <span class="ttl">拖一个框圈出重点</span>
+    <button id="cropOk" style="display:none" onclick="cropRun()">用这张</button>
+  </div>
+  <div id="cropBox"><img id="cropImg" alt=""><div id="cropRect"></div></div>
+</div>
+<!-- 终端引用（批次三）：全彩会话挑几行，插进输入框 -->
+<div id="qsheet" onclick="if(event.target===this)quoteClose()">
+  <div class="mbox">
+    <div class="mtitle">引用终端 <span class="meta" id="qRange"></span></div>
+    <div id="qLines" style="max-height:50vh;overflow:auto;font-family:ui-monospace,Menlo,monospace;font-size:11px;background:#0a0a0a;border:1px solid #191919;border-radius:8px"></div>
+    <div class="row" style="margin-top:12px;gap:8px">
+      <button class="gray" style="flex:1" onclick="quoteClose()">取消</button>
+      <button style="flex:1" onclick="quoteRun()">引用</button>
+    </div>
+  </div>
+</div>
+<script>
+@@JS:main@@
+</script>
+<style>
+#cbptt{position:fixed;right:10px;bottom:calc(var(--dockh,100px) + 52px);
+  width:54px;height:54px;border-radius:50%;z-index:8;display:none;
+  background:rgba(255,197,61,.16);border:1px solid #FFC53D;color:#FFC53D;
+  align-items:center;justify-content:center;font-size:24px;
+  -webkit-user-select:none;user-select:none;touch-action:none;
+  box-shadow:0 2px 10px rgba(0,0,0,.45)}
+#cbptt.on{background:rgba(248,81,73,.28);border-color:#ff6467;color:#ff6467}
+#cbptt{display:flex}   /* 语音输入全页面可用：不再只在会话页出现 */
+/* 两个图标都留在 DOM 里，只用 class 切换显示。
+   之前按下时用 innerHTML 换图标，手指按着的那个 <svg> 被摘出 DOM，
+   WebKit 就再也送不到 touchend —— 松手停不下来（录音卡住）。 */
+#cbptt .i-stop{display:none}
+#cbptt.on .i-mic{display:none}
+#cbptt.on .i-stop{display:block}
+#cbpttst{position:fixed;right:10px;bottom:calc(var(--dockh,100px) + 150px);
+  max-width:70vw;background:#191919;border:1px solid #242424;color:#f5f5f5;
+  font:12px/1.5 -apple-system,"PingFang SC",sans-serif;
+  padding:7px 11px;border-radius:9px;z-index:7;display:none;
+  white-space:pre-wrap;word-break:break-all;box-shadow:0 2px 10px rgba(0,0,0,.5)}
+/* 倒计时贴到语音键下面：麦克风整体上抬一格，倒计时占它原来的位置。
+   安卓的麦克风是壳里 shim.js 注入的（换 APK 才能改它那条 CSS），这里用更高
+   优先级盖掉位置；状态条（录音中/转写中）跟着再上抬，别压在按钮上——
+   压住的话松手的 touchend 落到气泡上，录音就收不住了。 */
+html body #cbshim_mic{bottom:calc(var(--dockh,100px) + 52px)!important}
+html body #cbshim_st{bottom:calc(var(--dockh,100px) + 150px)!important}
+/* 🎨 挪到麦克风正上方后，它原来的右上角位置留给「关闭会话」✕（见 .fbtn/#closeSessBtn） */
+</style>
+<div id="cbptt" aria-label="按住说"><svg class="i-mic" width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round"><rect x="9" y="2.5" width="6" height="11" rx="3"/><path d="M5.5 11a6.5 6.5 0 0 0 13 0M12 17.5V21"/></svg><svg class="i-stop" width="24" height="24" viewBox="0 0 24 24" fill="currentColor"><rect x="7" y="7" width="10" height="10" rx="2"/></svg></div>
+<div id="cbpttst"></div>
+<script>
+@@JS:ptt_feedback@@
+</script><!-- App 内页浮层（套餐/条款/隐私）：返回只收起这层，设置页原样还在，不重新加载 -->
+<div id="cbSheet">
+  <div id="cbHd">
+    <button class="gray" style="flex:none;padding:6px 11px;font-size:13px" onclick="sheetClose()">← 返回</button>
+    <span class="ttl" id="cbSheetT">…</span>
+  </div>
+  <iframe id="cbSheetF"></iframe>
+</div>
+<style>
+/* 首次打开的使用引导：三件事（滑页 / 音量键 / 快捷键拉手），看过或跳过就不再弹 */
+#g1{display:none;position:fixed;top:0;left:0;right:0;bottom:0;background:#000c;z-index:40;align-items:center;justify-content:center;padding:20px}
+#g1.on{display:flex}
+#g1 .card{width:100%;max-width:360px;background:#161616;border:1px solid #242424;border-radius:16px;padding:18px 16px 14px}
+#g1 h3{margin:0 0 12px;font-size:17px;letter-spacing:-.3px}
+#g1 .it{display:flex;gap:10px;align-items:flex-start;margin-bottom:12px}
+#g1 .k{flex:none;width:34px;height:34px;border-radius:9px;background:#1a1b1b;border:1px solid #2a2a2a;display:flex;align-items:center;justify-content:center;font-size:16px}
+#g1 .it b{display:block;font-size:14px;margin-bottom:2px}
+#g1 .it p{margin:0;font-size:12.5px;line-height:1.65;color:#838383}
+#g1 .b{display:flex;gap:8px;margin-top:6px}
+#g1 .b button{flex:1}
+</style>
+<div id="g1" onclick="if(event.target===this)g1Close()">
+  <div class="card">
+    <h3>aiboss · 怎么用</h3>
+    <div class="it"><span class="k">↔</span><div><b>左右滑翻页</b><p>右滑回会话列表；左滑去对话、命令终端、设置。底部几条小横线就是当前页。</p></div></div>
+    <div class="it"><span class="k">🔊</span><div><b>音量键说话和发送</b><p>音量上键按住说话、松手结束；下键按一下发送；长按下键约 1 秒切静音。</p></div></div>
+    <div class="it"><span class="k">⌨</span><div><b>快捷键拉手</b><p>点输入框上方的小拉手（或往上滑）展开 Tab、↑↓、⏎、Esc 等按键，再点收起。</p></div></div>
+    <div class="b"><button class="gray" onclick="g1Close()">跳过</button><button onclick="g1Close()">开始使用</button></div>
+  </div>
+</div>
+<script src="/static/boss.js"></script><script src="/static/upd.js"></script></body></html>

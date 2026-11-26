@@ -1,0 +1,6 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <string name="app_name">代理工头</string>
+    <!-- 产品线标识：cb_product cookie、默认 URL、查更新、兜底槽共用（products/<线>/product.json 同源） -->
+    <string name="cb_product">agentboss</string>
+</resources>

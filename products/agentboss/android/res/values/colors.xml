@@ -1,0 +1,5 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <!-- 自适应图标底板色：取自 mac/icon-1024.png 四周暗角的均值（tools/make-icons.py） -->
+    <color name="ic_launcher_background">#140904</color>
+</resources>

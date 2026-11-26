@@ -1,0 +1,230 @@
+[
+  {
+    "id": "esp32c3-invented-act",
+    "date": "2026-11-14",
+    "src": "synth",
+    "note": "真实事故复盘：回复写的是「已将查看器发布为网页」，模型把上一轮的问句当成本轮待确认。锁 _act_grounded。",
+    "voice": true,
+    "cause": "把 esp32c3 的网页查看器跑起来，再看看能不能接模型",
+    "reply": "已经把网页查看器跑起来了，测试也过了。\n\n- 静态页放在 `/tmp/esp32-web/`，用 `python -m http.server 8000` 起的\n- 手机连同一网段就能看到实时画面\n\n已将查看器发布为网页，局域网内可以直接打开。需要自由看模型时再添加摄像头推流。",
+    "llm": {
+      "text": "已将查看器发布为网页\n要不要发布这次改动？\n相关",
+      "na": false
+    },
+    "expect": {
+      "wait": false,
+      "act": "",
+      "act_src": "not-grounded",
+      "na": "llm-no"
+    }
+  },
+  {
+    "id": "release-done-then-asks-publish",
+    "date": "2026-11-09",
+    "src": "synth",
+    "note": "真实事故复盘：发布完 0.7.41 又问「要不要发布 0.7.41」。锁 _act_conflict（问句确实在回复里，靠「已经做完」判掉）。",
+    "voice": true,
+    "cause": "发版",
+    "reply": "v0.7.41 已发布上线，DMG 也公证钉票过了。\n中继显示：最新包 v0.7.41 · 全员基线 v0.7.40。\n要不要发布灰度版本？",
+    "llm": {
+      "text": "已发布 0.7.41，DMG 也上架了\n要不要发布灰度版本？\n相关",
+      "na": true
+    },
+    "expect": {
+      "wait": true,
+      "act": "",
+      "act_src": "conflict",
+      "na": "rule"
+    }
+  },
+  {
+    "id": "na-no-but-question-above",
+    "date": "2026-11-09",
+    "src": "synth",
+    "note": "真实漏报复盘：na 只看结尾判 NO，真正的待确认问句在中间。锁「act 有就按在等你」。",
+    "voice": true,
+    "cause": "提醒分层先做哪档",
+    "reply": "有两个做法：\n\n1. 只给 Pro 开智能提醒（现在就是）\n2. 也给 Free 开，只是不播语音\n\n要不要顺带把 Free 的语音开关也放开？\n另外我顺手把文案里的「智能提醒」改成了「提醒」，看着不那么像卖点。\n\n改完了，随时可以继续。",
+    "llm": {
+      "text": "给了两个分层做法，文案也改了\n要不要顺带把 Free 的语音开关也放开？\n相关",
+      "na": false
+    },
+    "expect": {
+      "wait": true,
+      "act": "要不要顺带把 Free 的语音开关也放开？",
+      "act_src": "ok",
+      "na": "llm-no"
+    }
+  },
+  {
+    "id": "pick-one-of-two",
+    "date": "2026-11-10",
+    "src": "synth",
+    "note": "会话里「选一项」：问句在回复里，原话摘抄通过；结尾没有强弱词，na 走 no-signal，靠 act 兜住。",
+    "voice": true,
+    "cause": "端口到底开哪个",
+    "reply": "端口就用 8790：除了你自己，没人会连它。\n要是想让老客户端也能连，还有个折中——两台都开着。\n你选一个：A 只开 8790、B 两个端口都开。",
+    "llm": {
+      "text": "端口定成 8790，给了两个方案\n你选一个：A 只开 8790、B 两个端口都开。\n相关",
+      "na": null
+    },
+    "expect": {
+      "wait": true,
+      "act": "你选一个：A 只开 8790、B 两个端口都开。",
+      "act_src": "ok",
+      "na": "no-signal"
+    }
+  },
+  {
+    "id": "paraphrased-act",
+    "date": "2026-11-14",
+    "src": "synth",
+    "note": "模型把问句改成自己的说法（是否发布…）——不是原话就丢。规则（要不要）已经判它在等人，所以 wait 不受影响。",
+    "voice": true,
+    "cause": "发 0.9.1",
+    "reply": "0.9.1 的输入框问题都修完了，包也打好了。\n要不要发布 0.9.1 灰度？",
+    "llm": {
+      "text": "输入框问题修完，包已打好\n是否发布 0.9.1 灰度\n相关",
+      "na": null
+    },
+    "expect": {
+      "wait": true,
+      "act": "",
+      "act_src": "not-grounded",
+      "na": "rule"
+    }
+  },
+  {
+    "id": "short-act",
+    "date": "2026-11-09",
+    "src": "synth",
+    "note": "只摘了两个字（「继续」）：太短不算待确认，免得把总结词当问句。",
+    "voice": true,
+    "cause": "继续",
+    "reply": "已经继续跑完了，测试全过。\n剩下的改动我列在下面：\n- 输入框字体\n- 清空按钮",
+    "llm": {
+      "text": "跑完了，测试全过\n继续\n相关",
+      "na": false
+    },
+    "expect": {
+      "wait": false,
+      "act": "",
+      "act_src": "not-grounded",
+      "na": "llm-no"
+    }
+  },
+  {
+    "id": "plain-done",
+    "date": "2026-11-14",
+    "src": "real",
+    "note": "纯完成：没有问句、没有强弱词。不该提醒成「等你」。",
+    "voice": true,
+    "cause": "更新时提示本地有改动",
+    "reply": "已经清掉了，工作区现在是干净的。\n\n为什么会有「本地有改动」：`.playwright-mcp/` 下两份 console 日志是入库文件，我每次跑浏览器测试都会改写它们。\n\n处理：\n- 把 `.playwright-mcp/` 整个删掉并从索引移除（调试产物不该入库）\n- 已提交推送 b832141",
+    "llm": {
+      "text": "清掉了 playwright 调试产物，工作区已干净\n无\n相关",
+      "na": false
+    },
+    "expect": {
+      "wait": false,
+      "act": "",
+      "act_src": "",
+      "na": "llm-no"
+    }
+  },
+  {
+    "id": "real-direct-get-fix",
+    "date": "2026-11-12",
+    "src": "real",
+    "note": "真实回复（直连白名单漏 /api/notify_hist）：结尾是结论，模型给了空待确认。",
+    "voice": true,
+    "cause": "提醒历史页没数据",
+    "reply": "已经修好了：问题不在于数据缺失，根源是直连白名单不一致：\n\n- 页面把 `/api/notify_hist` 放进了 `DIRECT_GET`，说明它走 P2P/局域网直连\n- 但 host 的 `DT_PATHS` 白名单里漏了这一条，直连请求全被 `require_token` 以「dt 只授权只读路径」拒绝，返回 403\n\n数据本身是好的：host 本地有 604 条记录。",
+    "llm": {
+      "text": "修好了直连白名单漏掉 /api/notify_hist 的问题\n无\n相关",
+      "na": false
+    },
+    "expect": {
+      "wait": false,
+      "act": "",
+      "act_src": "",
+      "na": "no-signal"
+    }
+  },
+  {
+    "id": "manual-step-needed",
+    "date": "2026-11-09",
+    "src": "synth",
+    "note": "要用户手动跑命令：规则强命中就直接判在等你，不花钱调模型。（act 行前的「需要你」是标签，_reply_split 会剥掉）",
+    "voice": true,
+    "cause": "把 Codex 支持做起来",
+    "reply": "Codex 的 hook 我写好了，但这台机器上没装它。\n需要你手动执行：npm i -g @openai/codex",
+    "llm": {
+      "text": "hook 写好了，机器上没装 codex\n需要你手动执行：npm i -g @openai/codex\n相关",
+      "na": null
+    },
+    "expect": {
+      "wait": true,
+      "act": "手动执行：npm i -g @openai/codex",
+      "act_src": "ok",
+      "na": "rule"
+    }
+  },
+  {
+    "id": "free-tier-rule-only",
+    "date": "2026-11-09",
+    "src": "synth",
+    "note": "免费档/语音播报关掉：不调模型，只按规则判（同一段回复在付费档会多一层模型判断）。",
+    "voice": false,
+    "cause": "把 Codex 支持做起来",
+    "reply": "Codex 的 hook 我写好了，但这台机器上没装它。\n需要你手动执行：npm i -g @openai/codex",
+    "llm": {
+      "text": "",
+      "na": null
+    },
+    "expect": {
+      "wait": true,
+      "act": "",
+      "act_src": "",
+      "na": "off"
+    }
+  },
+  {
+    "id": "model-timeout-tail-question",
+    "date": "2026-11-11",
+    "src": "synth",
+    "note": "模型超时/不可用：退回「结尾是不是问号」，别忘了记成 llm-down（健康页要能看出是没判上）。",
+    "voice": true,
+    "cause": "A 还是 B",
+    "reply": "A 方案改动最小，B 方案更彻底但没有回滚。\n那就按 A 来了？",
+    "llm": {
+      "text": "",
+      "na": null
+    },
+    "expect": {
+      "wait": true,
+      "act": "",
+      "act_src": "",
+      "na": "llm-down"
+    }
+  },
+  {
+    "id": "next-step-question",
+    "date": "2026-11-13",
+    "src": "synth",
+    "note": "结尾是选择问句（弱信号、非强规则）：模型答 YES 才算在等你。（act 行前的「下一步」是标签，会剥掉）",
+    "voice": true,
+    "cause": "Windows 收尾",
+    "reply": "Windows 那边 ConPTY 的按键映射也补完了，测试过了。\n下一步是先补 Linux 的 installer，还是先把 Windows 打包发了？",
+    "llm": {
+      "text": "Windows 按键映射补完，测试通过\n下一步是先补 Linux 的 installer，还是先把 Windows 打包发了？\n相关",
+      "na": true
+    },
+    "expect": {
+      "wait": true,
+      "act": "是先补 Linux 的 installer，还是先把 Windows 打包发了？",
+      "act_src": "ok",
+      "na": "llm-yes"
+    }
+  }
+]

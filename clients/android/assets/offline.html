@@ -1,0 +1,282 @@
+<!doctype html>
+<html lang="zh">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover">
+<meta name="format-detection" content="telephone=no">
+<title>网络</title>
+<!--
+  离线页 = App 内的网络面板（WiFi 全程不跳系统设置）。
+    · WiFi 开关有真实状态（开/关），不是"切换"两个字
+    · 可以扫描 WiFi、选一个、在 App 内输密码、连接
+    · 移动数据：能直接开关就开关（Android <10）；开关不了就跳到系统「互联网连接」浮层面板
+      或移动数据设置页（Android 10+ 无公开 API，见 docs/05 第 32、34 条）
+  壳提供的桥：CB.netState() / CB.toggleWifi() / CB.toggleMobile() / CB.wifiScan() /
+             CB.connectWifi(ssid, psk) / CB.retry() / CB.requestLocation()
+-->
+<style>
+  html, body {
+    height: 100%; margin: 0; background: #0b0e14; color: #e6edf3;
+    font: 16px/1.55 -apple-system, "PingFang SC", "Noto Sans SC", sans-serif;
+    -webkit-user-select: none; user-select: none; -webkit-tap-highlight-color: transparent;
+  }
+  body { display: block; overflow-y: auto; -webkit-overflow-scrolling: touch; }
+  .box { width: 100%; max-width: 440px; padding: 18px; margin: 0 auto; box-sizing: border-box; }
+  .top { text-align: center; margin-bottom: 16px; }
+  .ico { font-size: 34px; line-height: 1; }
+  h1 { font-size: 18px; font-weight: 600; margin: 8px 0 4px; }
+  .top p { margin: 0; color: #8b949e; font-size: 13px; }
+  .top .note { margin-top: 6px; color: #6e7681; font-size: 12px; }
+
+  .card { background: #12171F; border: 1px solid #30363D; border-radius: 14px; overflow: hidden; margin-bottom: 14px; }
+  .row { display: flex; align-items: center; padding: 13px 12px; }
+  .row + .row, .sub + .sub { border-top: 1px solid #212936; }
+  .k { color: #8b949e; font-size: 14px; width: 72px; }
+  .v { flex: 1; font-size: 14px; }
+  .v.off { color: #6e7681; }
+
+  /* 真开关：状态一眼可见 */
+  .sw { width: 50px; height: 30px; border-radius: 15px; background: #30363d; position: relative; transition: background .15s; flex: none; }
+  .sw::after { content: ''; position: absolute; top: 3px; left: 3px; width: 24px; height: 24px; border-radius: 50%; background: #8b949e; transition: left .15s, background .15s; }
+  .sw.on { background: #2EA043; }
+  .sw.on::after { left: 23px; background: #fff; }
+
+  .sub { padding: 10px 12px; }
+  .subhead { display: flex; align-items: center; justify-content: space-between; }
+  .subhead b { font-size: 13px; color: #8b949e; font-weight: 500; }
+  .ghost { background: none; border: 0; color: #58a6ff; font-size: 13px; padding: 4px 2px; font-family: inherit; }
+
+  .net { display: flex; align-items: center; padding: 11px 2px; border-top: 1px solid #212936; }
+  .net .nm { flex: 1; font-size: 14px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  .net .tag { font-size: 11px; color: #6e7681; margin-left: 6px; }
+  .bars { font-size: 12px; color: #58a6ff; margin-left: 8px; letter-spacing: -1px; }
+  .lock { font-size: 12px; color: #8b949e; margin-left: 6px; }
+  .net .go { font-size: 12px; color: #58a6ff; margin-left: 8px; }
+
+  .pw { margin: 8px 2px 2px; display: none; }
+  .pw.on { display: block; }
+  .pw input {
+    width: 100%; box-sizing: border-box; padding: 11px 12px; border-radius: 10px;
+    border: 1px solid #30363d; background: #0b0e14; color: #e6edf3; font-size: 15px; font-family: inherit;
+  }
+  .pw .btns { display: flex; margin-top: 8px; }
+  .pw button { flex: 1; padding: 11px; border-radius: 10px; border: 1px solid #30363d; background: #1a2130; color: #e6edf3; font-size: 14px; font-family: inherit; }
+  .pw button.pri { background: #2EA043; border-color: #2EA043; color: #fff; margin-left: 8px; }
+
+  .big { display: block; width: 100%; padding: 15px; border-radius: 12px; border: 0; background: #2EA043; color: #fff; font-size: 16px; font-weight: 600; font-family: inherit; }
+  .hint { margin-top: 12px; color: #6e7681; font-size: 12px; min-height: 17px; text-align: center; }
+</style>
+</head>
+<body>
+<div class="box">
+  <div class="top">
+    <div class="ico"><svg width="34" height="34" viewBox="0 0 24 24" fill="none" stroke="#FFC53D" stroke-width="1.6" stroke-linecap="round" aria-hidden="true"><path d="M2 8.5a15 15 0 0 1 20 0M5.5 12a10 10 0 0 1 13 0M9 15.5a5 5 0 0 1 6 0"/><circle cx="12" cy="19" r="1.4" fill="#FFC53D" stroke="none"/></svg></div>
+    <h1 id="t">断网了</h1>
+    <p id="lead">现在连不上。检查下面的 WiFi 或移动数据，网一通就自动重连。</p>
+    <p class="note" id="netnote"></p>
+  </div>
+
+  <div class="card">
+    <div class="row">
+      <div class="k">WiFi</div>
+      <div class="v off" id="v_wifi">读取中…</div>
+      <div class="sw" id="sw_wifi" onclick="act('wifi')"></div>
+    </div>
+    <div class="row">
+      <div class="k">移动数据</div>
+      <div class="v off" id="v_mob">读取中…</div>
+      <div class="sw" id="sw_mob" onclick="act('mobile')"></div>
+    </div>
+  </div>
+
+  <div class="card" id="card_panel" style="display:none">
+    <div class="sub">
+      <div class="subhead"><b>系统网络设置</b></div>
+      <div class="net" onclick="act('panel')">
+        <div class="nm">WiFi 与移动数据都在系统浮层里设置</div>
+        <div class="go">打开</div>
+      </div>
+      <div class="hint" style="margin:8px 2px 0">浮层盖在本页之上，不离开 App；改完点「完成」返回即可。</div>
+    </div>
+  </div>
+
+  <div class="card" id="card_scan">
+    <div class="sub">
+      <div class="subhead">
+        <b>WiFi 网络</b>
+        <button class="ghost" onclick="act('scan')">扫描</button>
+      </div>
+      <div id="list" style="max-height:38vh;overflow-y:auto;-webkit-overflow-scrolling:touch"><div class="net"><div class="nm" style="color:#6e7681">点「扫描」找附近的 WiFi</div></div></div>
+      <div class="pw" id="pw">
+        <input id="psk" type="password" placeholder="输入 WiFi 密码" autocomplete="off">
+        <div class="btns">
+          <button onclick="act('cancel')">取消</button>
+          <button class="pri" onclick="act('join')">连接</button>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <button class="big" onclick="act('retry')">重 试</button>
+  <button class="ghost" style="width:100%;margin-top:8px" onclick="act('home')">开发机列表（换一台）</button>
+  <button class="ghost" style="width:100%" onclick="act('back')">返回上一台开发机</button>
+  <div class="hint" id="h">正在自动重试…</div>
+</div>
+
+<script>
+  var curSsid = '', pendSsid = '';
+
+  function say(t) { var h = document.getElementById('h'); if (h) { h.textContent = t; } }
+  function esc(s) { return String(s).replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/"/g, '&quot;'); }
+
+  function paint(json) {
+    var d; try { d = JSON.parse(json); } catch (e) { return; }
+    var on = !!d.wifiOn;
+    var sw = document.getElementById('sw_wifi');
+    if (sw) { sw.className = 'sw' + (on ? ' on' : ''); }
+    var v = document.getElementById('v_wifi');
+    if (v) {
+      v.textContent = d.wifi ? ('已连接' + (d.ssid && d.ssid !== '<unknown ssid>' ? ' · ' + d.ssid : ''))
+                             : (on ? '已打开，未连接' : '已关闭');
+      v.className = 'v' + (d.wifi ? '' : ' off');
+    }
+    curSsid = d.ssid && d.ssid !== '<unknown ssid>' ? d.ssid : '';
+    var ms = document.getElementById('sw_mob');
+    if (ms) { ms.className = 'sw' + (d.mobile ? ' on' : ''); }
+    var mv = document.getElementById('v_mob');
+    if (mv) {
+      mv.textContent = d.mobile ? (d.mobileConn ? '已开启 · 已连上' : '已开启') : '已关闭';
+      mv.className = 'v' + (d.mobile ? '' : ' off');
+    }
+    if (d.online) { say('网络已恢复，正在重载…'); }
+
+    /* 有系统「互联网连接」浮层的机器（红米 Android 10）→ 用浮层管 WiFi；
+       没有浮层的（坚果 Pro Android 7 实测无此面板）→ 保留页面内扫描/密码连接 */
+    var hasPanel = !!d.panel;
+    var cp = document.getElementById('card_panel');
+    var cs = document.getElementById('card_scan');
+    if (cp) { cp.style.display = hasPanel ? '' : 'none'; }
+    if (cs) { cs.style.display = hasPanel ? 'none' : ''; }
+    /* 只说「断网」，不再分手机没网 / 开发机没回应。
+       以前按 online 分开写，判断一错就把人指去修对的网（用户 2026-11-09 要求统一）。
+       文案固定在 HTML 里，这里不再改标题。 */
+    var nn = document.getElementById('netnote');
+    if (nn) {
+      nn.textContent = hasPanel ? 'WiFi 用系统浮层设置，移动数据开关见下'
+                                : '这台机器没有系统浮层，WiFi 在下面直接扫描连接';
+    }
+  }
+
+  window.__cbNetState = paint;
+  /* 点了「重试」但手机还是没网：说清楚，别让「正在重试…」挂着像卡死 */
+  window.__cbRetryOffline = function () { say('还是没有网络，连上后会自动重载'); };
+  /* 点「开发机列表」但手机自己没网：说清楚是手机没网，别让人以为列表页坏了 */
+  window.__cbHomeOffline = function () { say('手机没网，连上后会自动重载到开发机列表'); };
+  /* 带浮层的机器（Android 10+）App 自己关不了 WiFi，只能交给系统浮层；
+     点「WiFi」开关被系统拒绝时顺手把浮层打开，别让用户自己找。 */
+  window.__cbWifiBlocked = function () {
+    say('这台机器不允许 App 直接开关 WiFi，正在打开系统网络浮层…');
+    act('panel');
+  };
+  window.__cbMobileBlocked = function () { say('App 无权开关移动数据，已打开系统的移动网络开关，打开后返回即可'); };
+  /* 壳把浮层/设置页全试过都打不开时回调：把下一步说清楚 */
+  window.__cbPanelFail = function () {
+    say('系统设置打不开：请下拉通知栏，或在手机「设置」里手动打开 WiFi / 移动数据');
+  };
+  window.__cbNeedLoc = function () { say('扫描 WiFi 需要「定位」权限，请允许'); };
+  window.__cbWifiJoined = function (ssid) {
+    stopConn();
+    say('已连接 ' + ssid + '，正在重载…');
+    setTimeout(function () { try { CB.retry(); } catch (e) { } }, 1500);
+  };
+  window.__cbWifiFail = function () { stopConn(); say('连接失败或已取消，可以再试一次'); };
+
+  /* 连接过程要能看到时间在走，否则"正在连接"看起来像卡死 */
+  var connTimer = null, connT0 = 0, connSsid = '';
+  function startConn(ssid) {
+    stopConn();
+    connSsid = ssid; connT0 = Date.now();
+    connTimer = setInterval(function () {
+      var s = Math.round((Date.now() - connT0) / 1000);
+      say('正在连接 ' + connSsid + '… ' + s + 's（最多 15 秒）');
+    }, 1000);
+    say('正在连接 ' + connSsid + '… 0s（最多 15 秒）');
+  }
+  function stopConn() { if (connTimer) { clearInterval(connTimer); connTimer = null; } }
+
+  window.__cbWifiList = function (json) {
+    var arr; try { arr = JSON.parse(json); } catch (e) { arr = []; }
+    var box = document.getElementById('list');
+    if (!box) { return; }
+    if (!arr.length) {
+      box.innerHTML = '<div class="net"><div class="nm" style="color:#6e7681">没扫到网络（可能需要定位权限，或 WiFi 未打开）</div></div>';
+      return;
+    }
+    var html = '';
+    for (var i = 0; i < arr.length; i++) {
+      var n = arr[i];
+      var bars = ['·', '▁', '▁▃', '▁▃▅', '▁▃▅▇'][Math.max(1, Math.min(4, n.level + 1))] || '▁';
+      html += '<div class="net" onclick="pick(' + i + ')">'
+           + '<div class="nm">' + esc(n.ssid) + (n.saved ? '<span class="tag">已保存</span>' : '') + '</div>'
+           + '<div class="bars">' + bars + '</div>'
+           + (n.secured ? '<div class="lock">🔒</div>' : '')
+           + '<div class="go">连接</div></div>';
+    }
+    box.innerHTML = html;
+    window.__list = arr;
+  };
+
+  function pick(i) {
+    var n = (window.__list || [])[i];
+    if (!n) { return; }
+    pendSsid = n.ssid;
+    /* 开放网络直接连；加密网络一律问密码（Android 10+ 读不到已保存的密码，
+       老系统也统一走这条路，避免生成无密码的坏配置） */
+    if (!n.secured) { startConn(n.ssid); CB.connectWifi(pendSsid, ''); return; }
+    document.getElementById('pw').className = 'pw on';
+    document.getElementById('psk').value = '';
+    document.getElementById('psk').placeholder = n.ssid + ' 的密码';
+    setTimeout(function () { try { document.getElementById('psk').focus(); } catch (e) { } }, 120);
+    say('输入密码后点「连接」');
+  }
+
+  function act(k) {
+    try {
+      if (k === 'retry') { say('正在重试…'); CB.retry(); return; }
+      /* 换一台：直接开中继的会话列表（/ 会自动落到在线的那台，或出设备列表）。
+         手机自己没网时去了也是白跑，先说清楚。 */
+      if (k === 'home') {
+        say('正在打开开发机列表…');
+        if (typeof CB.home !== 'function') { say('客户端版本太旧，请先更新 App'); return; }
+        CB.home(); return;
+      }
+      if (k === 'back') { try { CB.back(); } catch (e) { } return; }
+      if (k === 'wifi') { CB.toggleWifi(); setTimeout(fresh, 1200); return; }
+      if (k === 'mobile') { CB.toggleMobile(); setTimeout(fresh, 900); return; }
+      if (k === 'panel') {
+        stopConn();
+        if (CB.openNetPanel) { say('正在打开系统网络设置，改完返回即可'); CB.openNetPanel(); }
+        else if (CB.openWifiSettings) { say('正在打开系统 WiFi 设置，改完返回即可'); CB.openWifiSettings(); }
+        else { say('客户端版本太旧，打不开系统设置，请在手机「设置」里手动打开 WiFi'); }
+        return;
+      }
+      if (k === 'scan') { say('正在扫描…'); CB.requestLocation(); CB.wifiScan(); return; }
+      if (k === 'cancel') { document.getElementById('pw').className = 'pw'; return; }
+      if (k === 'join') {
+        var p = document.getElementById('psk').value || '';
+        if (p.length < 8) { say('WPA 密码至少 8 位，请检查'); return; }
+        document.getElementById('pw').className = 'pw';
+        startConn(pendSsid);
+        CB.connectWifi(pendSsid, p);
+        return;
+      }
+    } catch (e) { }
+    say('暂时无法操作');
+  }
+
+  function fresh() { try { paint(CB.netState()); } catch (e) { } }
+  fresh();
+  setInterval(fresh, 3000);
+</script>
+</body>
+</html>

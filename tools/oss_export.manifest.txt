@@ -1,0 +1,59 @@
+# OSS 导出 manifest —— rsync filter（先匹配先赢：具体排除在前，白名单随后，兄弟/根兜底逐层锁）
+# 官方部署零变化：这只圈「带出去什么」，源仓不动。
+
+# --- 排除（越具体越靠前）---
+- .DS_Store
+- pet_token.txt
+- *.seed
+- *.keystore
+- *.db
+- __pycache__/
+- /.git/**
+- /.superpowers/**
+- /host/logs/
+- /host/build/
+- /host/*.pyc
+- /clients/android/keystores/
+- /clients/android/build/**
+- /clients/ios/build/**
+- /tools/oss_cert.py
+- /tools/dns_hook.py
+- /tools/oss_put.sh
+- /tools/check_admin_mobile.js
+# 导出器自测在导出仓自指（它测的就是私有源仓），不带
+- /tests/test_oss_export.py
+- /tests/test_vs_app_name.mjs
+
+# --- 白名单（部分带走的目录必须紧跟兄弟排除，防默认 include 漏带）---
++ /LICENSE
++ /README.md
++ /conftest.py
++ /pytest.ini
++ /docs/
++ /docs/selfhost-relay.md
+- /docs/*
++ /host/
++ /host/**
++ /relay/
++ /relay/relay.py
+- /relay/*
++ /shared/
++ /shared/**
++ /clients/
++ /clients/android/
++ /clients/android/**
++ /clients/ios/
++ /clients/ios/**
+- /clients/*
++ /products/
++ /products/agentboss/
++ /products/agentboss/**
+- /products/*
++ /tests/
++ /tests/**
++ /tools/
++ /tools/**
+
+# --- 根兜底：未列出一律不带（点文件/旧产品线/内部文档）---
+- /*
+- /.*/

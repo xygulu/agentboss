@@ -1,0 +1,16 @@
+# 自建中继 docker compose 版。用法：
+#   cp selfhost.env.sample selfhost.env   # 改完至少填 RELAY_ADMIN_TOKEN
+#   docker compose up -d
+# 数据都在 ./data 卷里（relay.db），升级换 relay.py 重启即可。
+services:
+  relay:
+    image: python:3.11-slim
+    working_dir: /app
+    command: sh -c "pip install -q aiohttp && python relay.py --host 0.0.0.0 --port 8791 --db /data/relay.db"
+    ports:
+      - "8791:8791"
+    env_file: selfhost.env
+    volumes:
+      - ../../relay/relay.py:/app/relay.py:ro
+      - ./data:/data
+    restart: unless-stopped
